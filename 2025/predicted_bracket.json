@@ -1,0 +1,517 @@
+{
+  "First Round": [
+    {
+      "game_id": 1,
+      "unique_game_id": 1,
+      "team1": "1. Duke",
+      "team2": "TBD",
+      "winner": "1. Duke",
+      "region": "East"
+    },
+    {
+      "game_id": 2,
+      "unique_game_id": 2,
+      "team1": "8. Mississippi State",
+      "team2": "9. Baylor",
+      "winner": "9. Baylor",
+      "region": "East"
+    },
+    {
+      "game_id": 3,
+      "unique_game_id": 3,
+      "team1": "5. Oregon",
+      "team2": "12. Liberty",
+      "winner": "5. Oregon",
+      "region": "East"
+    },
+    {
+      "game_id": 4,
+      "unique_game_id": 4,
+      "team1": "4. Arizona",
+      "team2": "13. Akron",
+      "winner": "4. Arizona",
+      "region": "East"
+    },
+    {
+      "game_id": 5,
+      "unique_game_id": 5,
+      "team1": "6. BYU",
+      "team2": "11. VCU",
+      "winner": "11. VCU",
+      "region": "East"
+    },
+    {
+      "game_id": 6,
+      "unique_game_id": 6,
+      "team1": "3. Wisconsin",
+      "team2": "14. Montana",
+      "winner": "3. Wisconsin",
+      "region": "East"
+    },
+    {
+      "game_id": 7,
+      "unique_game_id": 7,
+      "team1": "7. Saint Mary's",
+      "team2": "10. Vanderbilt",
+      "winner": "7. Saint Mary's",
+      "region": "East"
+    },
+    {
+      "game_id": 8,
+      "unique_game_id": 8,
+      "team1": "2. Alabama",
+      "team2": "15. Robert Morris",
+      "winner": "2. Alabama",
+      "region": "East"
+    },
+    {
+      "game_id": 9,
+      "unique_game_id": 9,
+      "team1": "1. Houston",
+      "team2": "16. SIU-Edwardsville",
+      "winner": "1. Houston",
+      "region": "Midwest"
+    },
+    {
+      "game_id": 10,
+      "unique_game_id": 10,
+      "team1": "8. Gonzaga",
+      "team2": "9. Georgia",
+      "winner": "8. Gonzaga",
+      "region": "Midwest"
+    },
+    {
+      "game_id": 11,
+      "unique_game_id": 11,
+      "team1": "5. Clemson",
+      "team2": "12. McNeese State",
+      "winner": "5. Clemson",
+      "region": "Midwest"
+    },
+    {
+      "game_id": 12,
+      "unique_game_id": 12,
+      "team1": "4. Purdue",
+      "team2": "13. High Point",
+      "winner": "4. Purdue",
+      "region": "Midwest"
+    },
+    {
+      "game_id": 13,
+      "unique_game_id": 13,
+      "team1": "6. Illinois",
+      "team2": "TBD",
+      "winner": "6. Illinois",
+      "region": "Midwest"
+    },
+    {
+      "game_id": 14,
+      "unique_game_id": 14,
+      "team1": "3. Kentucky",
+      "team2": "14. Troy",
+      "winner": "3. Kentucky",
+      "region": "Midwest"
+    },
+    {
+      "game_id": 15,
+      "unique_game_id": 15,
+      "team1": "7. UCLA",
+      "team2": "10. Utah State",
+      "winner": "10. Utah State",
+      "region": "Midwest"
+    },
+    {
+      "game_id": 16,
+      "unique_game_id": 16,
+      "team1": "2. Tennessee",
+      "team2": "15. Wofford",
+      "winner": "2. Tennessee",
+      "region": "Midwest"
+    },
+    {
+      "game_id": 17,
+      "unique_game_id": 17,
+      "team1": "1. Auburn",
+      "team2": "16. Alabama State",
+      "winner": "1. Auburn",
+      "region": "South"
+    },
+    {
+      "game_id": 18,
+      "unique_game_id": 18,
+      "team1": "8. Louisville",
+      "team2": "9. Creighton",
+      "winner": "8. Louisville",
+      "region": "South"
+    },
+    {
+      "game_id": 19,
+      "unique_game_id": 19,
+      "team1": "5. Michigan",
+      "team2": "12. UC-San Diego",
+      "winner": "5. Michigan",
+      "region": "South"
+    },
+    {
+      "game_id": 20,
+      "unique_game_id": 20,
+      "team1": "4. Texas A&M",
+      "team2": "13. Yale",
+      "winner": "4. Texas A&M",
+      "region": "South"
+    },
+    {
+      "game_id": 21,
+      "unique_game_id": 21,
+      "team1": "6. Ole Miss",
+      "team2": "11. UNC",
+      "winner": "6. Ole Miss",
+      "region": "South"
+    },
+    {
+      "game_id": 22,
+      "unique_game_id": 22,
+      "team1": "3. Iowa State",
+      "team2": "14. Lipscomb",
+      "winner": "3. Iowa State",
+      "region": "South"
+    },
+    {
+      "game_id": 23,
+      "unique_game_id": 23,
+      "team1": "7. Marquette",
+      "team2": "10. New Mexico",
+      "winner": "7. Marquette",
+      "region": "South"
+    },
+    {
+      "game_id": 24,
+      "unique_game_id": 24,
+      "team1": "2. Michigan State",
+      "team2": "15. Bryant",
+      "winner": "2. Michigan State",
+      "region": "South"
+    },
+    {
+      "game_id": 25,
+      "unique_game_id": 25,
+      "team1": "1. Florida",
+      "team2": "16. Norfolk State",
+      "winner": "1. Florida",
+      "region": "West"
+    },
+    {
+      "game_id": 26,
+      "unique_game_id": 26,
+      "team1": "8. UConn",
+      "team2": "9. Oklahoma",
+      "winner": "9. Oklahoma",
+      "region": "West"
+    },
+    {
+      "game_id": 27,
+      "unique_game_id": 27,
+      "team1": "5. Memphis",
+      "team2": "12. Colorado State",
+      "winner": "5. Memphis",
+      "region": "West"
+    },
+    {
+      "game_id": 28,
+      "unique_game_id": 28,
+      "team1": "4. Maryland",
+      "team2": "13. Grand Canyon",
+      "winner": "13. Grand Canyon",
+      "region": "West"
+    },
+    {
+      "game_id": 29,
+      "unique_game_id": 29,
+      "team1": "6. Missouri",
+      "team2": "11. Drake",
+      "winner": "11. Drake",
+      "region": "West"
+    },
+    {
+      "game_id": 30,
+      "unique_game_id": 30,
+      "team1": "3. Texas Tech",
+      "team2": "14. UNC Wilmington",
+      "winner": "3. Texas Tech",
+      "region": "West"
+    },
+    {
+      "game_id": 31,
+      "unique_game_id": 31,
+      "team1": "7. Kansas",
+      "team2": "10. Arkansas",
+      "winner": "10. Arkansas",
+      "region": "West"
+    },
+    {
+      "game_id": 32,
+      "unique_game_id": 32,
+      "team1": "2. St. John's (NY)",
+      "team2": "15. Omaha",
+      "winner": "2. St. John's (NY)",
+      "region": "West"
+    }
+  ],
+  "Second Round": [
+    {
+      "game_id": 1,
+      "unique_game_id": 33,
+      "team1": "1. Duke",
+      "team2": "9. Baylor",
+      "winner": "1. Duke",
+      "region": "East"
+    },
+    {
+      "game_id": 2,
+      "unique_game_id": 34,
+      "team1": "5. Oregon",
+      "team2": "4. Arizona",
+      "winner": "4. Arizona",
+      "region": "East"
+    },
+    {
+      "game_id": 3,
+      "unique_game_id": 35,
+      "team1": "11. VCU",
+      "team2": "3. Wisconsin",
+      "winner": "3. Wisconsin",
+      "region": "East"
+    },
+    {
+      "game_id": 4,
+      "unique_game_id": 36,
+      "team1": "7. Saint Mary's",
+      "team2": "2. Alabama",
+      "winner": "2. Alabama",
+      "region": "East"
+    },
+    {
+      "game_id": 5,
+      "unique_game_id": 37,
+      "team1": "1. Houston",
+      "team2": "8. Gonzaga",
+      "winner": "1. Houston",
+      "region": "Midwest"
+    },
+    {
+      "game_id": 6,
+      "unique_game_id": 38,
+      "team1": "5. Clemson",
+      "team2": "4. Purdue",
+      "winner": "5. Clemson",
+      "region": "Midwest"
+    },
+    {
+      "game_id": 7,
+      "unique_game_id": 39,
+      "team1": "6. Illinois",
+      "team2": "3. Kentucky",
+      "winner": "6. Illinois",
+      "region": "Midwest"
+    },
+    {
+      "game_id": 8,
+      "unique_game_id": 40,
+      "team1": "10. Utah State",
+      "team2": "2. Tennessee",
+      "winner": "2. Tennessee",
+      "region": "Midwest"
+    },
+    {
+      "game_id": 9,
+      "unique_game_id": 41,
+      "team1": "1. Auburn",
+      "team2": "8. Louisville",
+      "winner": "1. Auburn",
+      "region": "South"
+    },
+    {
+      "game_id": 10,
+      "unique_game_id": 42,
+      "team1": "5. Michigan",
+      "team2": "4. Texas A&M",
+      "winner": "4. Texas A&M",
+      "region": "South"
+    },
+    {
+      "game_id": 11,
+      "unique_game_id": 43,
+      "team1": "6. Ole Miss",
+      "team2": "3. Iowa State",
+      "winner": "3. Iowa State",
+      "region": "South"
+    },
+    {
+      "game_id": 12,
+      "unique_game_id": 44,
+      "team1": "7. Marquette",
+      "team2": "2. Michigan State",
+      "winner": "2. Michigan State",
+      "region": "South"
+    },
+    {
+      "game_id": 13,
+      "unique_game_id": 45,
+      "team1": "1. Florida",
+      "team2": "9. Oklahoma",
+      "winner": "1. Florida",
+      "region": "West"
+    },
+    {
+      "game_id": 14,
+      "unique_game_id": 46,
+      "team1": "5. Memphis",
+      "team2": "13. Grand Canyon",
+      "winner": "5. Memphis",
+      "region": "West"
+    },
+    {
+      "game_id": 15,
+      "unique_game_id": 47,
+      "team1": "11. Drake",
+      "team2": "3. Texas Tech",
+      "winner": "3. Texas Tech",
+      "region": "West"
+    },
+    {
+      "game_id": 16,
+      "unique_game_id": 48,
+      "team1": "10. Arkansas",
+      "team2": "2. St. John's (NY)",
+      "winner": "10. Arkansas",
+      "region": "West"
+    }
+  ],
+  "Sweet 16": [
+    {
+      "game_id": 1,
+      "unique_game_id": 49,
+      "team1": "1. Duke",
+      "team2": "4. Arizona",
+      "winner": "1. Duke",
+      "region": "East"
+    },
+    {
+      "game_id": 2,
+      "unique_game_id": 50,
+      "team1": "3. Wisconsin",
+      "team2": "2. Alabama",
+      "winner": "3. Wisconsin",
+      "region": "East"
+    },
+    {
+      "game_id": 3,
+      "unique_game_id": 51,
+      "team1": "1. Houston",
+      "team2": "5. Clemson",
+      "winner": "1. Houston",
+      "region": "Midwest"
+    },
+    {
+      "game_id": 4,
+      "unique_game_id": 52,
+      "team1": "6. Illinois",
+      "team2": "2. Tennessee",
+      "winner": "6. Illinois",
+      "region": "Midwest"
+    },
+    {
+      "game_id": 5,
+      "unique_game_id": 53,
+      "team1": "1. Auburn",
+      "team2": "4. Texas A&M",
+      "winner": "1. Auburn",
+      "region": "South"
+    },
+    {
+      "game_id": 6,
+      "unique_game_id": 54,
+      "team1": "3. Iowa State",
+      "team2": "2. Michigan State",
+      "winner": "3. Iowa State",
+      "region": "South"
+    },
+    {
+      "game_id": 7,
+      "unique_game_id": 55,
+      "team1": "1. Florida",
+      "team2": "5. Memphis",
+      "winner": "1. Florida",
+      "region": "West"
+    },
+    {
+      "game_id": 8,
+      "unique_game_id": 56,
+      "team1": "3. Texas Tech",
+      "team2": "10. Arkansas",
+      "winner": "3. Texas Tech",
+      "region": "West"
+    }
+  ],
+  "Elite Eight": [
+    {
+      "game_id": 1,
+      "unique_game_id": 57,
+      "team1": "1. Duke",
+      "team2": "3. Wisconsin",
+      "winner": "1. Duke",
+      "region": "East"
+    },
+    {
+      "game_id": 2,
+      "unique_game_id": 58,
+      "team1": "1. Houston",
+      "team2": "6. Illinois",
+      "winner": "1. Houston",
+      "region": "Midwest"
+    },
+    {
+      "game_id": 3,
+      "unique_game_id": 59,
+      "team1": "1. Auburn",
+      "team2": "3. Iowa State",
+      "winner": "3. Iowa State",
+      "region": "South"
+    },
+    {
+      "game_id": 4,
+      "unique_game_id": 60,
+      "team1": "1. Florida",
+      "team2": "3. Texas Tech",
+      "winner": "1. Florida",
+      "region": "West"
+    }
+  ],
+  "Final Four": [
+    {
+      "game_id": 1,
+      "unique_game_id": 61,
+      "team1": "1. Duke",
+      "team2": "1. Florida",
+      "winner": "1. Florida",
+      "region": "Final Four"
+    },
+    {
+      "game_id": 2,
+      "unique_game_id": 62,
+      "team1": "3. Iowa State",
+      "team2": "1. Houston",
+      "winner": "1. Houston",
+      "region": "Final Four"
+    }
+  ],
+  "Championship": [
+    {
+      "game_id": 1,
+      "unique_game_id": 63,
+      "team1": "1. Florida",
+      "team2": "1. Houston",
+      "winner": "1. Houston"
+    }
+  ]
+}
