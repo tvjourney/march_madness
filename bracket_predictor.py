@@ -47,7 +47,7 @@ class Matchup:
     game_id: int
     unique_game_id: int = 0  # Unique ID across all rounds
     
-    def win_probability(self) -> float:
+    def win_probability(self, verbose: bool = False) -> float:
         """
         Compute team1's win probability using available data.
 
@@ -56,6 +56,9 @@ class Matchup:
         standard chess/538 log5 model; the efficiency model uses a logistic
         curve calibrated so that a +10 net-rating gap ≈ 75% win probability
         (consistent with KenPom historical calibration).
+
+        Args:
+            verbose: If True, print the probability breakdown for this matchup.
 
         Returns:
             Probability that team1 wins (0–1).
@@ -71,17 +74,32 @@ class Matchup:
             net_diff = t1_net - t2_net
             # logistic scale k=0.15 → net_diff of ~10 pts ≈ 75% win prob
             p_eff = 1.0 / (1.0 + math.exp(-0.15 * net_diff))
-            # Weight: 40% ELO, 60% efficiency (advanced stats are more predictive)
-            return 0.4 * p_elo + 0.6 * p_eff
+            # Weight: 65% ELO, 35% efficiency — ELO is well-calibrated for tournament
+            # seeding and historical outcomes; advanced stats serve as a secondary signal
+            p_blend = 0.65 * p_elo + 0.35 * p_eff
+            if verbose:
+                print(
+                    f"  [prob] {self.team1.name} vs {self.team2.name}: "
+                    f"p_elo={p_elo:.3f} (ELO diff {elo_diff:+.0f}), "
+                    f"p_eff={p_eff:.3f} (NetRtg diff {net_diff:+.1f}), "
+                    f"blended={p_blend:.3f}"
+                )
+            return p_blend
 
+        if verbose:
+            print(
+                f"  [prob] {self.team1.name} vs {self.team2.name}: "
+                f"p_elo={p_elo:.3f} (ELO diff {elo_diff:+.0f}, no advanced stats)"
+            )
         return p_elo
 
-    def simulate(self, randomness_factor: float = 0.1) -> Team:
+    def simulate(self, randomness_factor: float = 0.1, verbose: bool = False) -> Team:
         """
         Simulate the matchup between two teams with seed-based randomness.
 
         Args:
             randomness_factor: Base randomness factor, used for non-seed-specific adjustments
+            verbose: If True, print probability breakdown and outcome for this game.
 
         Returns:
             The winning Team object
@@ -94,9 +112,9 @@ class Matchup:
             return self.team1
 
         # Use seed-based randomness for more realistic tournament outcomes
-        return self.simulate_with_seed_based_randomness()
-    
-    def simulate_with_seed_based_randomness(self) -> Team:
+        return self.simulate_with_seed_based_randomness(verbose=verbose)
+
+    def simulate_with_seed_based_randomness(self, verbose: bool = False) -> Team:
         """
         Simulate matchup using a win probability model blended with seed-calibrated noise.
 
@@ -105,11 +123,14 @@ class Matchup:
         historical NCAA upset rates, making the simulation more realistic than a flat
         ELO perturbation.
 
+        Args:
+            verbose: If True, print probability breakdown and outcome for this game.
+
         Returns:
             The winning Team object
         """
         # Base win probability from model (ELO + advanced stats)
-        p_team1 = self.win_probability()
+        p_team1 = self.win_probability(verbose=verbose)
 
         # Seed matchup context
         higher_seed = min(self.team1.seed, self.team2.seed)
@@ -128,8 +149,14 @@ class Matchup:
                 (8,  9): 0.40,   # ~51.9% — nearly a coin flip
             }
             noise = noise_map.get((higher_seed, lower_seed), 0.20)
-            # Perturb the win probability symmetrically
-            p_team1 += random.uniform(-noise, noise)
+            perturbation = random.uniform(-noise, noise)
+            if verbose:
+                print(
+                    f"  [noise] R{self.round_num} matchup ({higher_seed} vs {lower_seed}): "
+                    f"noise=±{noise:.2f}, perturbation={perturbation:+.3f}, "
+                    f"final_p={max(0.0, min(1.0, p_team1 + perturbation)):.3f}"
+                )
+            p_team1 += perturbation
         else:
             # Later rounds: noise shrinks for top seeds as they prove themselves
             def get_noise(seed: int, rnd: int) -> float:
@@ -142,14 +169,24 @@ class Matchup:
                 elif seed <= 8:
                     return max(0.15, 0.20 - (rnd - 1) * 0.01)
                 else:
-                    # Cinderella teams that survive keep surprising
-                    return min(0.40, 0.20 + (rnd - 1) * 0.05)
+                    # Cinderella teams that survive: cap noise so they can't just
+                    # keep coin-flipping their way through; noise tapers as rounds
+                    # progress because their historical upset rate doesn't compound
+                    return max(0.10, 0.25 - (rnd - 1) * 0.03)
 
             n1 = get_noise(self.team1.seed, self.round_num)
             n2 = get_noise(self.team2.seed, self.round_num)
             # Average the two noise levels, then perturb
             noise = (n1 + n2) / 2.0
-            p_team1 += random.uniform(-noise, noise)
+            perturbation = random.uniform(-noise, noise)
+            if verbose:
+                print(
+                    f"  [noise] R{self.round_num} seeds ({self.team1.seed} vs {self.team2.seed}): "
+                    f"noise_t1=±{n1:.2f}, noise_t2=±{n2:.2f}, avg=±{noise:.2f}, "
+                    f"perturbation={perturbation:+.3f}, "
+                    f"pre_clamp_p={p_team1 + perturbation:.3f}"
+                )
+            p_team1 += perturbation
 
             # Championship: small historical boost for #1 seeds (64.1% title win rate)
             if self.round_num == 6:
@@ -160,7 +197,17 @@ class Matchup:
 
         # Clamp to [0, 1] and draw outcome
         p_team1 = max(0.0, min(1.0, p_team1))
-        return self.team1 if random.random() < p_team1 else self.team2
+        roll = random.random()
+        winner = self.team1 if roll < p_team1 else self.team2
+        if verbose:
+            upset = (winner.seed > min(self.team1.seed, self.team2.seed))
+            print(
+                f"  [result] {self.team1.name} ({self.team1.seed}) vs "
+                f"{self.team2.name} ({self.team2.seed}): "
+                f"p({self.team1.name})={p_team1:.3f}, roll={roll:.3f} → "
+                f"{'UPSET: ' if upset else ''}{winner.name} wins"
+            )
+        return winner
     
     def __str__(self) -> str:
         return f"{self.team1} vs {self.team2} (Round {self.round_num}, {self.region}, Game {self.game_id}, UID: {self.unique_game_id})"
@@ -168,17 +215,19 @@ class Matchup:
 class BracketPredictor:
     """Class to predict March Madness bracket outcomes."""
     
-    def __init__(self, randomness_factor: float = 0.1):
+    def __init__(self, randomness_factor: float = 0.1, debug: bool = False):
         """
         Initialize the bracket predictor.
-        
+
         Args:
             randomness_factor: Amount of randomness to include in predictions (0-1)
+            debug: If True, print win probability breakdown and outcome for each game.
         """
         self.teams: Dict[str, Team] = {}
         self.bracket: List[Matchup] = []
         self.results: Dict[int, List[Matchup]] = {}
         self.randomness_factor = randomness_factor
+        self.debug = debug
         self.round_names = {
             1: "First Round",
             2: "Second Round",
@@ -386,7 +435,7 @@ class BracketPredictor:
             
             # Simulate current round matchups
             for matchup in current_matchups:
-                winner = matchup.simulate(self.randomness_factor)
+                winner = matchup.simulate(self.randomness_factor, verbose=self.debug)
                 results[current_round].append((
                     matchup.team1, 
                     matchup.team2, 
@@ -476,7 +525,7 @@ class BracketPredictor:
                 
                 # Simulate each Final Four matchup
                 for matchup in current_matchups:
-                    winner = matchup.simulate(self.randomness_factor)
+                    winner = matchup.simulate(self.randomness_factor, verbose=self.debug)
                     final_four_winners.append(winner)
                 
                 # Store results in the Final Four round
@@ -496,7 +545,7 @@ class BracketPredictor:
                     next_unique_id += 1
                     
                     # Simulate Championship game
-                    champion = championship_matchup.simulate(self.randomness_factor)
+                    champion = championship_matchup.simulate(self.randomness_factor, verbose=self.debug)
                     results[6] = [(championship_matchup.team1, championship_matchup.team2, champion, "Championship", 1, championship_matchup.unique_game_id)]
                 
                 # No more rounds after Championship

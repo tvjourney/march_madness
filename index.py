@@ -283,7 +283,7 @@ def handler(
         
         # Step 5: Run the prediction
         print(f"Predicting bracket with randomness factor: {randomness}")
-        predictor = BracketPredictor(randomness_factor=randomness)
+        predictor = BracketPredictor(randomness_factor=randomness, debug=debug)
         predictor.setup_first_round(teams_data)
         results = predictor.simulate_tournament()
         
