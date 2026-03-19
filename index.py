@@ -22,6 +22,8 @@ from scrapers import (
     compute_historical_upset_rates,
     add_tournament_info,
     ensure_dir_exists,
+    fill_missing_seeds,
+    find_best_team_match,
 )
 
 def handler(
@@ -150,6 +152,8 @@ def handler(
             print(f"Scraping tournament teams from sports-reference.com for {year}...")
             tournament_df = scrape_tournament_teams(year, debug=debug)
             if tournament_df is not None:
+                # Attempt to fill any missing seeds using ESPN as fallback
+                tournament_df = fill_missing_seeds(tournament_df, year=year, debug=debug)
                 tournament_df.to_csv(tournament_file, index=False)
                 print(f"Saved scraped tournament teams to {tournament_file}")
         elif os.path.exists(tournament_file):
@@ -196,19 +200,29 @@ def handler(
             print(f"Found {len(complete_teams)} teams in the tournament")
             
             # Check if any tournament teams don't have ELO ratings
-            tournament_teams_without_elo = tournament_df[~tournament_df['Team'].isin(elo_df['Team'])]
+            # (after fuzzy matching in add_tournament_info, these are truly unresolvable)
+            tournament_teams_without_elo = tournament_df[~tournament_df['Team'].isin(combined_df.dropna(subset=['Seed'])['Team'])]
             if not tournament_teams_without_elo.empty:
-                print(f"Warning: {len(tournament_teams_without_elo)} tournament teams don't have ELO ratings:")
-                for _, row in tournament_teams_without_elo.iterrows():
-                    print(f"  - {row['Team']} (Seed: {row['Seed']}, Region: {row['Region']})")
-                
-                # Add missing teams with a default ELO
+                elo_name_list = list(elo_df['Team'])
                 default_elo = elo_df['ELO'].median()
-                print(f"Adding missing teams with default ELO rating of {default_elo:.2f}")
-                
+                still_missing = []
+
                 for _, row in tournament_teams_without_elo.iterrows():
-                    new_row = {'Team': row['Team'], 'ELO': default_elo, 'Seed': row['Seed'], 'Region': row['Region']}
+                    best_match = find_best_team_match(row['Team'], elo_name_list, threshold=0.65)
+                    if best_match:
+                        matched_elo = float(elo_df.loc[elo_df['Team'] == best_match, 'ELO'].iloc[0])
+                        print(f"Fuzzy ELO match: '{row['Team']}' -> '{best_match}' (ELO: {matched_elo:.2f})")
+                        new_row = {'Team': row['Team'], 'ELO': matched_elo, 'Seed': row['Seed'], 'Region': row['Region']}
+                    else:
+                        still_missing.append(f"  - {row['Team']} (Seed: {row['Seed']}, Region: {row['Region']})")
+                        new_row = {'Team': row['Team'], 'ELO': default_elo, 'Seed': row['Seed'], 'Region': row['Region']}
                     combined_df = pd.concat([combined_df, pd.DataFrame([new_row])], ignore_index=True)
+
+                if still_missing:
+                    print(f"Warning: {len(still_missing)} tournament team(s) could not be matched to ELO data "
+                          f"and will use default ELO ({default_elo:.2f}):")
+                    for msg in still_missing:
+                        print(msg)
         else:
             print(f"Tournament teams file {tournament_file} not found.")
             print("Will use all teams from ELO ratings. Please create a tournament file for more accurate predictions.")
