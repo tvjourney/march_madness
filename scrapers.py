@@ -146,6 +146,9 @@ def normalize_team_name(name: str) -> str:
     normalized = name.strip().lower()
     # Remove trailing state/qualifier in parentheses for primary match attempt
     normalized = re.sub(r'\s*\((?:ny|ca|oh|fl|pa|il|tx|va|nc|sc)\)\s*$', '', normalized)
+    # Remove common institutional suffixes so e.g. "Saint Mary's College" matches "Saint Mary's"
+    normalized = re.sub(r'\s+college\s*$', '', normalized)
+    normalized = re.sub(r'\s+university\s*$', '', normalized)
     # Normalize punctuation
     normalized = normalized.replace('.', '').replace("'", "'").replace('–', '-')
     normalized = re.sub(r'\s+', ' ', normalized).strip()
@@ -498,10 +501,72 @@ def scrape_tournament_teams(year: Optional[int] = None, url: Optional[str] = Non
                                 if debug:
                                     print(f"Found team with text extraction: {team_name} (Seed: {seed}, Region: {region_name})")
         
+        # Fallback: if any seeds are missing, do a broader page-wide search for First Four teams.
+        # Sports-reference lists First Four participants in a separate section; those slots in
+        # the main bracket show as TBD (no link), so the region-div pass misses them.
+        found_keys = {(t['Team'], t['Seed'], t['Region']) for t in tournament_teams}
+        seeds_per_region: Dict[str, set] = {}
+        for t in tournament_teams:
+            seeds_per_region.setdefault(t['Region'], set()).add(t['Seed'])
+
+        regions_complete = all(
+            len(seeds_per_region.get(r, set())) == 16
+            for r in ['East', 'West', 'South', 'Midwest']
+        )
+
+        if not regions_complete:
+            if debug:
+                print("Bracket incomplete after region-div pass — running page-wide link search for First Four teams")
+
+            # Collect ALL team links on the page
+            all_links = soup.find_all('a', href=lambda h: h and '/cbb/schools/' in h)
+            for link in all_links:
+                team_name = link.text.strip()
+                if not team_name:
+                    continue
+
+                # Walk up the DOM (up to 5 levels) to find a seed span
+                seed = None
+                node = link.parent
+                for _ in range(5):
+                    if node is None:
+                        break
+                    for span in node.find_all('span', recursive=False):
+                        txt = span.text.strip()
+                        if txt.isdigit() and 1 <= int(txt) <= 16:
+                            seed = int(txt)
+                            break
+                    if seed is not None:
+                        break
+                    node = node.parent
+                if seed is None:
+                    continue
+
+                # Walk up the DOM to determine region from ancestor div IDs
+                region = None
+                node = link.parent
+                for _ in range(15):
+                    if node is None:
+                        break
+                    node_id = (node.get('id') or '').lower()
+                    for r in ['east', 'west', 'south', 'midwest']:
+                        if r in node_id:
+                            region = r.capitalize()
+                            break
+                    if region:
+                        break
+                    node = node.parent
+
+                if region and (team_name, seed, region) not in found_keys:
+                    tournament_teams.append({'Team': team_name, 'Seed': seed, 'Region': region})
+                    found_keys.add((team_name, seed, region))
+                    if debug:
+                        print(f"Page-wide search found: {team_name} (Seed: {seed}, Region: {region})")
+
         # Create DataFrame
         if tournament_teams:
             df = pd.DataFrame(tournament_teams)
-            
+
             print(f"Successfully scraped {len(df)} tournament teams")
             
             # Save the raw data for debugging
@@ -636,7 +701,7 @@ def scrape_tournament_teams_espn(year: Optional[int] = None, debug: bool = False
         current_year = datetime.datetime.now().year
         year = current_year if datetime.datetime.now().month < 6 else current_year + 1
 
-    url = f"https://www.espn.com/mens-college-basketball/tournament/bracket/_/id/{year}"
+    url = "https://www.espn.com/mens-college-basketball/bracket"
 
     try:
         print(f"Fetching tournament bracket from ESPN: {url}")
@@ -851,7 +916,7 @@ def scrape_advanced_stats(year: Optional[int] = None, debug: bool = False) -> Op
         current_year = datetime.datetime.now().year
         year = current_year if datetime.datetime.now().month < 6 else current_year + 1
 
-    url = f"https://barttorvik.com/trank.php?year={year}&sort=&top=0&conlimit=All#"
+    url = f"https://www.barttorvik.com/trank.php?year={year}&sort=&top=0&conlimit=All"
 
     try:
         print(f"Fetching advanced stats from {url}")
