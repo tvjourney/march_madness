@@ -935,125 +935,213 @@ def scrape_advanced_stats(year: Optional[int] = None, debug: bool = False) -> Op
         current_year = datetime.datetime.now().year
         year = current_year if datetime.datetime.now().month < 6 else current_year + 1
 
-    url = f"https://www.barttorvik.com/trank.php?year={year}&sort=&top=0&conlimit=All"
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+                      '(KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
+    }
 
+    # Attempt 1: Direct CSV flat file (no JS rendering required)
+    csv_url = f"https://barttorvik.com/{year}_team_results.csv"
+    result = _try_csv_endpoint(csv_url, headers, year, debug)
+    if result is not None:
+        return result
+
+    # Attempt 2: JSON API endpoint (teamslicejson)
+    json_url = f"https://barttorvik.com/teamslicejson.php?year={year}&json=1&type=R"
+    result = _try_json_endpoint(json_url, headers, year, debug)
+    if result is not None:
+        return result
+
+    # Attempt 3: trank.php with json=1 parameter
+    trank_json_url = f"https://barttorvik.com/trank.php?year={year}&sort=&top=0&conlimit=All&json=1"
+    result = _try_json_endpoint(trank_json_url, headers, year, debug)
+    if result is not None:
+        return result
+
+    print("Error: Could not find stats table on barttorvik.com")
+    return None
+
+
+def _parse_advanced_stats_df(df_raw: pd.DataFrame, debug: bool = False) -> Optional[pd.DataFrame]:
+    """Parse a raw DataFrame from barttorvik into the standard advanced stats format."""
+    # Normalize column names for flexible matching
+    col_lower = {c.lower().replace(' ', '').replace('.', '').replace('_', ''): c for c in df_raw.columns}
+
+    def find_col(*candidates):
+        for c in candidates:
+            if c in col_lower:
+                return col_lower[c]
+        return None
+
+    team_col = find_col('team', 'teamname')
+    adjoe_col = find_col('adjoe', 'adjo', 'adjo2', 'offeff')
+    adjde_col = find_col('adjde', 'adjd', 'adjd2', 'defeff')
+    adjt_col = find_col('adjt', 'adjtempo', 'tempo')
+    rk_col = find_col('rk', 'rank', 'trank')
+
+    if debug:
+        print(f"Column mapping: team={team_col}, adjoe={adjoe_col}, adjde={adjde_col}, adjt={adjt_col}, rk={rk_col}")
+
+    if team_col is None:
+        print("Error: Could not identify team name column")
+        return None
+
+    data = []
+    for _, row in df_raw.iterrows():
+        team_name = str(row[team_col]).strip() if team_col else None
+        if not team_name or team_name.lower() in ('nan', ''):
+            continue
+
+        def safe_float(col):
+            if col is None:
+                return None
+            try:
+                return float(row[col])
+            except (ValueError, TypeError):
+                return None
+
+        def safe_int(col):
+            if col is None:
+                return None
+            try:
+                val = str(row[col]).strip()
+                return int(val) if val.isdigit() else None
+            except (ValueError, TypeError):
+                return None
+
+        adj_oe = safe_float(adjoe_col)
+        adj_de = safe_float(adjde_col)
+        adj_t = safe_float(adjt_col)
+        t_rank = safe_int(rk_col)
+        net_rtg = round(adj_oe - adj_de, 2) if adj_oe is not None and adj_de is not None else None
+
+        data.append({
+            'Team': team_name,
+            'AdjOE': adj_oe,
+            'AdjDE': adj_de,
+            'AdjT': adj_t,
+            'NetRtg': net_rtg,
+            'TRank': t_rank
+        })
+
+    if not data:
+        return None
+
+    return pd.DataFrame(data)
+
+
+def _try_csv_endpoint(url: str, headers: dict, year: int, debug: bool) -> Optional[pd.DataFrame]:
+    """Try to fetch advanced stats from the barttorvik CSV flat file."""
+    from io import StringIO
     try:
         print(f"Fetching advanced stats from {url}")
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
-                          '(KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3'
-        }
         response = requests.get(url, headers=headers, timeout=30)
         response.raise_for_status()
 
+        # Guard against Cloudflare/HTML challenge pages
+        content = response.text.strip()
+        if content.startswith('<') or len(content) < 100:
+            if debug:
+                print("CSV endpoint returned HTML/short response, skipping")
+            return None
+
         if debug:
             ensure_dir_exists("debug")
-            debug_html = os.path.join("debug", f"advanced_stats_{year}.html")
-            with open(debug_html, "w", encoding="utf-8") as f:
-                f.write(response.text)
-            print(f"Saved HTML to {debug_html} for debugging")
+            debug_csv = os.path.join("debug", f"advanced_stats_{year}_raw.csv")
+            with open(debug_csv, "w", encoding="utf-8") as f:
+                f.write(content)
+            print(f"Saved raw CSV to {debug_csv}")
 
-        soup = BeautifulSoup(response.text, 'html.parser')
+        # Try reading with a header row first
+        try:
+            df_raw = pd.read_csv(StringIO(content))
+            df = _parse_advanced_stats_df(df_raw, debug=debug)
+            if df is not None and not df.empty:
+                print(f"Successfully scraped advanced stats for {len(df)} teams")
+                if debug:
+                    df.to_csv(os.path.join("debug", f"raw_advanced_stats_{year}.csv"), index=False)
+                return df
+        except Exception:
+            pass
 
-        # barttorvik uses a table with id="t-rank-table" or similar
-        table = soup.find('table', {'id': 't-rank-table'})
-        if not table:
-            table = soup.find('table')
+        # barttorvik CSVs often have no header row; fall back to known column positions:
+        # 0=rank, 1=team, 2=conf, 3=record, 4=adjoe, 5=adjde, 6=adjt, 7=barthag, ...
+        known_cols = ['rk', 'team', 'conf', 'rec', 'adjoe', 'adjde', 'adjt', 'barthag',
+                      'efg', 'efgd', 'tor', 'tord', 'orb', 'drb', 'ftr', 'ftrd',
+                      '2p', '2pd', '3p', '3pd', 'blk', 'blkd', 'stl', 'stld',
+                      '2pfr', '3pfr', 'adjo_rk', 'adjd_rk', 'adjt_rk', 'wab']
+        try:
+            df_raw = pd.read_csv(StringIO(content), header=None)
+            # Assign known column names up to however many columns exist
+            ncols = len(df_raw.columns)
+            df_raw.columns = known_cols[:ncols] if ncols <= len(known_cols) else (
+                known_cols + [f'col{i}' for i in range(ncols - len(known_cols))]
+            )
+            if debug:
+                print(f"CSV columns (no-header fallback): {list(df_raw.columns)}")
+            df = _parse_advanced_stats_df(df_raw, debug=debug)
+            if df is not None and not df.empty:
+                print(f"Successfully scraped advanced stats for {len(df)} teams")
+                if debug:
+                    df.to_csv(os.path.join("debug", f"raw_advanced_stats_{year}.csv"), index=False)
+                return df
+        except Exception:
+            pass
 
-        if not table:
-            print("Error: Could not find stats table on barttorvik.com")
-            return None
-
-        rows = table.find_all('tr')
-        if not rows:
-            print("Error: No rows found in stats table")
-            return None
-
-        # Parse header to find column indices
-        header_row = rows[0]
-        headers_cells = [th.text.strip() for th in header_row.find_all(['th', 'td'])]
-        if debug:
-            print(f"Table headers: {headers_cells}")
-
-        # Column name mapping (barttorvik uses shorthand names)
-        col_map = {
-            'team': None, 'adjoe': None, 'adjde': None, 'adjt': None, 'rk': None
-        }
-        for i, h in enumerate(headers_cells):
-            h_lower = h.lower().replace(' ', '').replace('.', '')
-            if h_lower in ('team', 'teamname'):
-                col_map['team'] = i
-            elif h_lower in ('adjoe', 'adjo', 'offeff', 'adjoffeff'):
-                col_map['adjoe'] = i
-            elif h_lower in ('adjde', 'adjd', 'defeff', 'adjdefeff'):
-                col_map['adjde'] = i
-            elif h_lower in ('adjt', 'adjtempo', 'tempo'):
-                col_map['adjt'] = i
-            elif h_lower in ('rk', 'rank', 'trank'):
-                col_map['rk'] = i
-
-        data = []
-        for row in rows[1:]:
-            cells = row.find_all('td')
-            if not cells:
-                continue
-
-            def get_cell_text(idx: Optional[int]) -> str:
-                if idx is None or idx >= len(cells):
-                    return ""
-                return cells[idx].text.strip()
-
-            # Try to get team name from link first
-            team_name = None
-            team_idx = col_map['team']
-            if team_idx is not None and team_idx < len(cells):
-                link = cells[team_idx].find('a')
-                team_name = link.text.strip() if link else cells[team_idx].text.strip()
-
-            if not team_name:
-                continue
-
-            try:
-                adj_oe = float(get_cell_text(col_map['adjoe'])) if col_map['adjoe'] is not None else None
-                adj_de = float(get_cell_text(col_map['adjde'])) if col_map['adjde'] is not None else None
-                adj_t = float(get_cell_text(col_map['adjt'])) if col_map['adjt'] is not None else None
-                t_rank_str = get_cell_text(col_map['rk'])
-                t_rank = int(t_rank_str) if t_rank_str.isdigit() else None
-            except (ValueError, TypeError):
-                continue
-
-            net_rtg = round(adj_oe - adj_de, 2) if adj_oe is not None and adj_de is not None else None
-
-            data.append({
-                'Team': team_name,
-                'AdjOE': adj_oe,
-                'AdjDE': adj_de,
-                'AdjT': adj_t,
-                'NetRtg': net_rtg,
-                'TRank': t_rank
-            })
-
-        if not data:
-            print("Error: No advanced stats rows parsed")
-            return None
-
-        df = pd.DataFrame(data)
-        print(f"Successfully scraped advanced stats for {len(df)} teams")
-
-        if debug:
-            raw_csv = os.path.join("debug", f"raw_advanced_stats_{year}.csv")
-            df.to_csv(raw_csv, index=False)
-            print(f"Saved raw data to {raw_csv}")
-
-        return df
-
-    except requests.RequestException as e:
-        print(f"Error fetching advanced stats: {e}")
         return None
+
     except Exception as e:
-        print(f"Error processing advanced stats: {e}")
-        import traceback
-        traceback.print_exc()
+        if debug:
+            print(f"CSV endpoint failed: {e}")
+        return None
+
+
+def _try_json_endpoint(url: str, headers: dict, year: int, debug: bool) -> Optional[pd.DataFrame]:
+    """Try to fetch advanced stats from the barttorvik JSON API endpoint."""
+    try:
+        print(f"Fetching advanced stats from {url}")
+        response = requests.get(url, headers=headers, timeout=30)
+        response.raise_for_status()
+
+        content = response.text.strip()
+        if not content or content.startswith('<'):
+            if debug:
+                print("JSON endpoint returned HTML/empty response, skipping")
+            return None
+
+        raw = response.json()
+
+        if debug:
+            ensure_dir_exists("debug")
+            import json
+            with open(os.path.join("debug", f"advanced_stats_{year}.json"), "w") as f:
+                json.dump(raw, f)
+
+        # The JSON is either a list of objects or a list of arrays with a separate header
+        if isinstance(raw, list) and raw:
+            if isinstance(raw[0], dict):
+                df_raw = pd.DataFrame(raw)
+            elif isinstance(raw[0], list):
+                # First element might be the header row
+                df_raw = pd.DataFrame(raw[1:], columns=raw[0])
+            else:
+                return None
+        else:
+            return None
+
+        df = _parse_advanced_stats_df(df_raw, debug=debug)
+        if df is not None and not df.empty:
+            print(f"Successfully scraped advanced stats for {len(df)} teams")
+            if debug:
+                df.to_csv(os.path.join("debug", f"raw_advanced_stats_{year}.csv"), index=False)
+            return df
+        return None
+
+    except Exception as e:
+        if debug:
+            print(f"JSON endpoint {url} failed: {e}")
         return None
 
 
