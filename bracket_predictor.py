@@ -116,12 +116,18 @@ class Matchup:
 
     def simulate_with_seed_based_randomness(self, verbose: bool = False) -> Team:
         """
-        Simulate matchup using a win probability model blended with seed-calibrated noise.
+        Simulate matchup using randomness calibrated to historical upset rates by seed.
 
-        The base win probability comes from win_probability() (ELO ± advanced stats).
-        Noise is then applied via a seed-matchup-specific randomness factor derived from
-        historical NCAA upset rates, making the simulation more realistic than a flat
-        ELO perturbation.
+        Builds a composite strength score from ELO and advanced stats (net_rtg), then
+        applies independent multiplicative noise to each team's score. This mirrors the
+        historical behavior where the ELO gap between teams naturally gates upset
+        probability — a tiny noise factor on a large ELO gap still almost never flips
+        the result, whereas a large noise factor on a close matchup creates a near
+        coin-flip, consistent with observed NCAA upset rates.
+
+        For later rounds, top seeds (1-4) see decreasing noise as they prove dominance,
+        while lower seeds that survive (9-16) see increasing volatility — reflecting
+        that Cinderella teams are genuinely unpredictable but face much stronger opponents.
 
         Args:
             verbose: If True, print probability breakdown and outcome for this game.
@@ -129,15 +135,27 @@ class Matchup:
         Returns:
             The winning Team object
         """
-        # Base win probability from model (ELO + advanced stats)
-        p_team1 = self.win_probability(verbose=verbose)
+        # Log win probability for diagnostics (does not affect outcome)
+        if verbose:
+            self.win_probability(verbose=True)
 
-        # Seed matchup context
+        # Build composite strength score: ELO base + advanced stats adjustment.
+        # net_rtg is scaled to ELO units (~10 net-rating points ≈ 100 ELO points),
+        # weighted 65/35 consistent with the win_probability() blend.
+        def composite_strength(team: Team) -> float:
+            score = team.elo
+            if team.net_rtg is not None:
+                score += team.net_rtg * 10.0 * 0.35 / 0.65
+            return score
+
+        team1_strength = composite_strength(self.team1)
+        team2_strength = composite_strength(self.team2)
+
         higher_seed = min(self.team1.seed, self.team2.seed)
         lower_seed = max(self.team1.seed, self.team2.seed)
 
         if self.round_num == 1:
-            # Noise levels calibrated to historical first-round upset rates
+            # Random factors calibrated to historical first-round upset rates
             noise_map = {
                 (1, 16): 0.03,   # ~1.3% upset rate
                 (2, 15): 0.10,   # ~7.1%
@@ -148,63 +166,67 @@ class Matchup:
                 (7, 10): 0.30,   # ~38.7%
                 (8,  9): 0.40,   # ~51.9% — nearly a coin flip
             }
-            noise = noise_map.get((higher_seed, lower_seed), 0.20)
-            perturbation = random.uniform(-noise, noise)
+            random_factor = noise_map.get((higher_seed, lower_seed), 0.20)
+
+            team1_adjusted = team1_strength * random.uniform(1 - random_factor, 1 + random_factor)
+            team2_adjusted = team2_strength * random.uniform(1 - random_factor, 1 + random_factor)
+
             if verbose:
                 print(
-                    f"  [noise] R{self.round_num} matchup ({higher_seed} vs {lower_seed}): "
-                    f"noise=±{noise:.2f}, perturbation={perturbation:+.3f}, "
-                    f"final_p={max(0.0, min(1.0, p_team1 + perturbation)):.3f}"
+                    f"  [noise] R1 matchup ({higher_seed} vs {lower_seed}): "
+                    f"factor=±{random_factor:.2f}, "
+                    f"t1_adj={team1_adjusted:.1f}, t2_adj={team2_adjusted:.1f}"
                 )
-            p_team1 += perturbation
         else:
-            # Later rounds: noise shrinks for top seeds as they prove themselves
-            def get_noise(seed: int, rnd: int) -> float:
+            # Later rounds: seed-dependent randomness that DECREASES for high seeds
+            # as they become more dominant, and INCREASES for low seeds that survive
+            # (Cinderella teams are genuinely volatile but face much stronger opponents)
+            def get_seed_factor(seed: int, round_num: int) -> float:
                 if seed == 1:
-                    return max(0.05, 0.20 - (rnd - 1) * 0.04)
+                    # #1 seeds become more dominant in later rounds (Sweet 16: 79% win rate)
+                    return max(0.05, 0.20 - (round_num - 1) * 0.04)
                 elif seed == 2:
-                    return max(0.08, 0.20 - (rnd - 1) * 0.03)
+                    # #2 seeds also strong but not as dominant as #1
+                    return max(0.08, 0.20 - (round_num - 1) * 0.03)
                 elif seed <= 4:
-                    return max(0.12, 0.20 - (rnd - 1) * 0.02)
+                    # #3-#4 seeds still relatively strong
+                    return max(0.12, 0.20 - (round_num - 1) * 0.02)
                 elif seed <= 8:
-                    return max(0.15, 0.20 - (rnd - 1) * 0.01)
+                    # #5-#8 seeds — moderate reduction
+                    return max(0.15, 0.20 - (round_num - 1) * 0.01)
                 else:
-                    # Cinderella teams that survive: cap noise so they can't just
-                    # keep coin-flipping their way through; noise tapers as rounds
-                    # progress because their historical upset rate doesn't compound
-                    return max(0.10, 0.25 - (rnd - 1) * 0.03)
+                    # #9-#16 seeds — increase volatility; double-digit seeds that survive
+                    # are historically unpredictable (but their lower strength score still
+                    # works against them against top seeds)
+                    return min(0.40, 0.20 + (round_num - 1) * 0.05)
 
-            n1 = get_noise(self.team1.seed, self.round_num)
-            n2 = get_noise(self.team2.seed, self.round_num)
-            # Average the two noise levels, then perturb
-            noise = (n1 + n2) / 2.0
-            perturbation = random.uniform(-noise, noise)
+            t1_factor = get_seed_factor(self.team1.seed, self.round_num)
+            t2_factor = get_seed_factor(self.team2.seed, self.round_num)
+
+            team1_adjusted = team1_strength * random.uniform(1 - t1_factor, 1 + t1_factor)
+            team2_adjusted = team2_strength * random.uniform(1 - t2_factor, 1 + t2_factor)
+
+            # Championship: historical boost for #1 seeds (64.1% title win rate)
+            if self.round_num == 6:
+                if self.team1.seed == 1:
+                    team1_adjusted *= 1.05
+                if self.team2.seed == 1:
+                    team2_adjusted *= 1.05
+
             if verbose:
                 print(
                     f"  [noise] R{self.round_num} seeds ({self.team1.seed} vs {self.team2.seed}): "
-                    f"noise_t1=±{n1:.2f}, noise_t2=±{n2:.2f}, avg=±{noise:.2f}, "
-                    f"perturbation={perturbation:+.3f}, "
-                    f"pre_clamp_p={p_team1 + perturbation:.3f}"
+                    f"t1_factor=±{t1_factor:.2f}, t2_factor=±{t2_factor:.2f}, "
+                    f"t1_adj={team1_adjusted:.1f}, t2_adj={team2_adjusted:.1f}"
                 )
-            p_team1 += perturbation
 
-            # Championship: small historical boost for #1 seeds (64.1% title win rate)
-            if self.round_num == 6:
-                if self.team1.seed == 1:
-                    p_team1 += 0.05
-                if self.team2.seed == 1:
-                    p_team1 -= 0.05
-
-        # Clamp to [0, 1] and draw outcome
-        p_team1 = max(0.0, min(1.0, p_team1))
-        roll = random.random()
-        winner = self.team1 if roll < p_team1 else self.team2
+        # Winner is determined by comparing adjusted composite strengths
+        winner = self.team1 if team1_adjusted > team2_adjusted else self.team2
         if verbose:
-            upset = (winner.seed > min(self.team1.seed, self.team2.seed))
+            upset = winner.seed > min(self.team1.seed, self.team2.seed)
             print(
                 f"  [result] {self.team1.name} ({self.team1.seed}) vs "
                 f"{self.team2.name} ({self.team2.seed}): "
-                f"p({self.team1.name})={p_team1:.3f}, roll={roll:.3f} → "
                 f"{'UPSET: ' if upset else ''}{winner.name} wins"
             )
         return winner
