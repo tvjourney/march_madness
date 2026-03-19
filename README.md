@@ -1,262 +1,256 @@
 # March Madness Bracket Predictor
 
-This script predicts March Madness tournament outcomes using ELO ratings with historical upset patterns.
+This tool predicts March Madness tournament outcomes using a blended ELO + advanced stats model with seed-calibrated randomness. It can scrape live data, pull historical results, and run thousands of simulations to produce win probabilities for every team.
 
 ## Features
 
-- Predicts winners based on ELO ratings with seed-calibrated randomness
-- Randomness is tuned to match historical NCAA tournament outcomes
+- **Win probability model** — blends ELO ratings (40%) with KenPom-equivalent efficiency stats (60%) when available, using a logistic curve calibrated to historical outcomes
+- **Advanced stats (KenPom-equivalent)** — scrapes AdjOE, AdjDE, AdjT, and NetRtg from barttorvik.com T-Rank
+- **Historical performance** — pulls actual NCAA tournament game results from sports-reference.com and computes upset rates by seed matchup and round
+- **Monte Carlo simulations** — runs N simulations and outputs championship probabilities and round-reach probabilities for every team
+- **ELO ratings** — scrapes live ELO from warrennolan.com
+- **Tournament bracket** — scrapes seeds and regions from sports-reference.com
+- Seed-calibrated randomness tuned to historical NCAA upset rates
 - Higher seeds become more dominant in later rounds (as in real tournaments)
-- Allows manual input of team data or loading from files
-- Simulates the entire tournament bracket
-- Exports results to JSON for further analysis
-- Scrapes the latest ELO ratings from warrennolan.com
-- Scrapes tournament teams and brackets from sports-reference.com
-- Handles incomplete tournament data with TBD placeholders
-- Supports unique game IDs throughout the tournament
+- Exports single-run bracket predictions and simulation probability results to JSON
 - Organizes data by tournament year in separate directories
-- Includes debug mode for troubleshooting
+- Debug mode for troubleshooting
 
 ## Requirements
 
-- Python 3.6+
-- Dependencies listed in `requirements.txt`
+- Python 3.11 (see `.python-version`)
+- pyenv + a local `.venv` (see setup below)
 
 ## Installation
 
-1. Clone this repository
-2. Set up a virtual environment:
-   ```bash
-   # Create virtual environment
-   python -m venv venv
-   
-   # Activate virtual environment (Linux/Mac)
-   source venv/bin/activate
-   
-   # Activate virtual environment (Windows)
-   venv\Scripts\activate
-   ```
-3. Install the required packages:
-   ```bash
-   pip install -r requirements.txt
-   ```
+This repo uses pyenv to manage the Python version and a local `.venv` for dependencies.
+
+### 1. Install the Python version
+
+```bash
+pyenv install 3.11
+```
+
+The `.python-version` file in the repo root will automatically activate Python 3.11 when you `cd` into the directory.
+
+### 2. Create and activate the virtual environment
+
+```bash
+python -m venv .venv
+source .venv/bin/activate    # Linux/Mac
+.venv\Scripts\activate       # Windows
+```
+
+### 3. Install dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+### 4. Verify
+
+```bash
+python -c "import pandas; print('OK')"
+```
+
+> **Tip:** Add `.venv/` to your shell's cd-hook or use a tool like `direnv` to auto-activate the venv when you enter the project directory.
 
 ## Project Structure
 
 ```
 march_madness/
-├── index.py               # Main entry point
-├── bracket_predictor.py   # Core prediction engine
-├── scrapers.py            # Data scraping module (ELO & tournament)
-├── requirements.txt       # Dependencies
-├── README.md              # This file
-├── 2025/                  # Year-specific tournament data
-│   ├── elo_ratings.csv    # ELO ratings for 2025
-│   ├── tournament_teams.csv # Tournament teams for 2025 
-│   └── predicted_bracket.json # Prediction results for 2025
-├── samples/               # Sample data files
+├── index.py                          # Main entry point
+├── bracket_predictor.py              # Core prediction engine
+├── scrapers.py                       # Data scraping module
+├── requirements.txt
+├── .python-version                   # Pins Python 3.11 for pyenv
+├── README.md
+├── 2026/
+│   ├── elo_ratings.csv               # ELO ratings
+│   ├── tournament_teams.csv          # Seeds and regions
+│   ├── advanced_stats.csv            # AdjOE/AdjDE/AdjT from barttorvik
+│   ├── historical_results.csv        # Raw historical game outcomes
+│   ├── historical_upset_rates.csv    # Aggregated upset rates by seed matchup
+│   ├── predicted_bracket.json        # Single-run bracket prediction
+│   └── simulation_probabilities.json # Win probabilities from N simulations
+├── samples/
 │   ├── sample_elo_ratings.csv
 │   └── tournament_teams_2024.csv
-└── debug/                 # Debug output files
-    ├── raw_elo_2025.csv            # Raw ELO data before processing
-    ├── elo_page_2025.html          # Raw HTML from ELO scraping
-    ├── raw_tournament_2025.csv     # Raw tournament team data
-    └── tournament_page_2025.html   # Raw HTML from tournament scraping
+└── debug/                            # Raw HTML and CSV debug output
 ```
-
-## Files
-
-- `bracket_predictor.py` - Core prediction engine and tournament simulation logic
-- `scrapers.py` - Module for scraping data (ELO ratings and tournament teams)
-- `index.py` - Main entry point with the handler function
 
 ## Usage
 
-### Quick Prediction
+### Full pipeline (scrape everything + simulate)
 
-The main way to use this tool is through the index.py file:
-
-```
-python index.py
-```
-
-By default, this will:
-1. Use the current year (or next year if after June)
-2. Look for files in a directory named with the year (e.g., "2025")
-3. Create this directory if it doesn't exist
-
-You can customize the prediction with command-line arguments:
-```
-python index.py --year 2025 --randomness 0.1
-```
-
-### Scraping Data
-
-To scrape the latest ELO ratings from warrennolan.com:
-```
-python index.py --year 2025 --scrape
-```
-
-To scrape tournament teams from sports-reference.com:
-```
-python index.py --year 2025 --scrape-tournament
-```
-
-To scrape both ELO ratings and tournament teams in one command:
-```
-python index.py --year 2025 --scrape --scrape-tournament
-```
-
-### Working with Different Years
-
-Specify a different tournament year:
-```
-python index.py --year 2024
-```
-
-All files will be organized in year-specific directories:
-- `2025/elo_ratings.csv` - ELO ratings for 2025
-- `2025/tournament_teams.csv` - Tournament teams for 2025
-- `2025/predicted_bracket.json` - Prediction results for 2025
-
-### Debug Mode
-
-For troubleshooting or investigating issues, use the debug mode:
-```
-python index.py --year 2025 --scrape --scrape-tournament --debug
+```bash
+python index.py --year 2026 \
+    --scrape \
+    --scrape-tournament \
+    --scrape-advanced \
+    --historical \
+    --simulations 1000
 ```
 
 This will:
-- Save raw HTML from scraping to debug files
-- Save raw data before processing
-- Print additional information during execution
-- Show full error tracebacks if errors occur
+1. Scrape ELO ratings from warrennolan.com
+2. Scrape tournament seeds/regions from sports-reference.com
+3. Scrape advanced stats (AdjOE/AdjDE/AdjT) from barttorvik.com
+4. Pull historical tournament results (2010–present) and compute upset rates
+5. Run 1000 simulations and print the top-10 championship probabilities
+6. Save all outputs under `2026/`
 
-### Interactive Mode
+### Scrape only ELO + tournament bracket
 
-For an interactive experience, you can use the bracket_predictor.py directly:
-```
-python bracket_predictor.py
-```
-
-### Scraping Data Directly
-
-To only scrape data without generating a prediction:
-```
-python scrapers.py --year 2025 --type elo
+```bash
+python index.py --year 2026 --scrape --scrape-tournament
 ```
 
-Or for tournament teams:
-```
-python scrapers.py --year 2025 --type tournament
-```
+### Add advanced stats to an existing prediction
 
-Or both:
-```
-python scrapers.py --year 2025 --type both
+```bash
+python index.py --year 2026 --scrape-advanced
 ```
 
-To include debug information:
+If `2026/advanced_stats.csv` already exists it will be loaded automatically without `--scrape-advanced`.
+
+### Pull historical data only
+
+```bash
+python index.py --year 2026 --scrape --scrape-tournament --historical --historical-start 2010
 ```
-python scrapers.py --year 2025 --type both --debug
+
+Saves:
+- `2026/historical_results.csv` — one row per game (Year, Round, seeds, winner, Upset flag)
+- `2026/historical_upset_rates.csv` — upset rates by seed matchup × round
+
+### Run simulations
+
+```bash
+python index.py --year 2026 --simulations 5000
 ```
 
-## Data Format
+Outputs `2026/simulation_probabilities.json` with:
+- `champion_prob` — probability each team wins the title
+- `round_reach_prob` — probability each team reaches each round
 
-### ELO Ratings File (CSV)
-Your ELO ratings CSV should have at minimum these columns:
-- `Team`: Team name
-- `ELO`: ELO rating
+### Use pre-existing data files
 
-### Tournament Teams File (CSV)
-The tournament teams file should have these columns:
-- `Team`: Team name
-- `Seed`: Seed number (1-16)
-- `Region`: Region name (East, West, South, Midwest)
+```bash
+python index.py --year 2026 \
+    --elo 2026/elo_ratings.csv \
+    --tournament 2026/tournament_teams.csv \
+    --advanced-stats 2026/advanced_stats.csv \
+    --simulations 1000
+```
 
-### Predicted Bracket JSON Format
+### Scrape data without running a prediction
 
-The predicted bracket JSON file includes:
-- Round-based organization (First Round, Second Round, etc.)
-- Unique game IDs that remain consistent throughout the tournament
-- Round-specific game IDs that restart at each round
-- Teams, winners, and regions for each matchup
+```bash
+python scrapers.py --year 2026 --type both
+```
 
-Example JSON structure:
+Options: `--type elo`, `--type tournament`, `--type both`
+
+### Debug mode
+
+```bash
+python index.py --year 2026 --scrape --scrape-tournament --scrape-advanced --debug
+```
+
+Saves raw HTML and intermediate CSVs to `debug/`.
+
+## How the Model Works
+
+### Win Probability
+
+For each matchup, team1's win probability is computed as:
+
+```
+p_elo  = 1 / (1 + 10^(-(elo1 - elo2) / 400))          # standard ELO formula
+p_eff  = 1 / (1 + exp(-0.15 * (netRtg1 - netRtg2)))    # efficiency logistic model
+p_win  = 0.4 * p_elo + 0.6 * p_eff                     # blend (when adv stats available)
+```
+
+The logistic scale (k=0.15) is calibrated so a +10 net-rating advantage ≈ 75% win probability, consistent with KenPom historical data.
+
+### Seed-Calibrated Noise
+
+After computing the base win probability, symmetric noise is added based on historical NCAA upset rates:
+
+| Matchup | Historical upset rate | Noise applied |
+|---------|----------------------|---------------|
+| 1 vs 16 | ~1.3% | ±3% |
+| 2 vs 15 | ~7.1% | ±10% |
+| 3 vs 14 | ~14.7% | ±15% |
+| 4 vs 13 | ~20.5% | ±18% |
+| 5 vs 12 | ~35.3% | ±27% |
+| 6 vs 11 | ~39.1% | ±30% |
+| 7 vs 10 | ~38.7% | ±30% |
+| 8 vs 9  | ~51.9% | ±40% |
+
+In later rounds, noise shrinks for top seeds (reflecting their dominance after the first weekend) and grows slightly for Cinderella teams. #1 seeds receive a 5% boost in the Championship game (64.1% historical title win rate).
+
+### Monte Carlo Simulations
+
+`--simulations N` reruns the full tournament N times independently. Output includes:
+- Championship win probability per team
+- Probability of reaching each round (First Round → Championship)
+
+## Data Sources
+
+| Data | Source | CLI flag |
+|------|--------|----------|
+| ELO ratings | warrennolan.com | `--scrape` |
+| Tournament seeds/regions | sports-reference.com | `--scrape-tournament` |
+| Advanced stats (AdjOE/AdjDE/AdjT) | barttorvik.com T-Rank | `--scrape-advanced` |
+| Historical game results | sports-reference.com | `--historical` |
+
+## Data Formats
+
+### Advanced Stats CSV (`advanced_stats.csv`)
+| Column | Description |
+|--------|-------------|
+| `Team` | Team name |
+| `AdjOE` | Adjusted offensive efficiency (points per 100 possessions) |
+| `AdjDE` | Adjusted defensive efficiency (points allowed per 100) |
+| `AdjT` | Adjusted tempo (possessions per 40 minutes) |
+| `NetRtg` | Net rating = AdjOE − AdjDE |
+| `TRank` | T-Rank overall ranking |
+
+### Simulation Probabilities JSON (`simulation_probabilities.json`)
+```json
+{
+  "simulations": 1000,
+  "champion_prob": {
+    "Duke": 0.142,
+    "Kansas": 0.118
+  },
+  "round_reach_prob": {
+    "Sweet 16": { "Duke": 0.81 },
+    "Elite Eight": { "Duke": 0.61 }
+  }
+}
+```
+
+### Predicted Bracket JSON (`predicted_bracket.json`)
 ```json
 {
   "First Round": [
     {
       "game_id": 1,
       "unique_game_id": 1,
-      "team1": "Team A",
-      "team2": "Team B",
-      "winner": "Team A",
+      "team1": "1. Duke",
+      "team2": "16. Norfolk State",
+      "winner": "1. Duke",
       "region": "East"
-    },
-    // ...
-  ],
-  // Additional rounds...
+    }
+  ]
 }
 ```
-
-## How Randomness Works
-
-The bracket predictor uses a sophisticated seed-calibrated randomness approach based on historical NCAA tournament data:
-
-### First Round Matchups
-- 1 vs 16: 1.3% upset chance (~3% randomness factor)
-- 2 vs 15: 7.1% upset chance (~10% randomness factor)
-- 3 vs 14: 14.7% upset chance (~15% randomness factor)
-- 4 vs 13: 20.5% upset chance (~18% randomness factor)
-- 5 vs 12: 35.3% upset chance (~27% randomness factor)
-- 6 vs 11: 39.1% upset chance (~30% randomness factor)
-- 7 vs 10: 38.7% upset chance (~30% randomness factor)
-- 8 vs 9: 51.9% upset chance (~40% randomness factor)
-
-### Later Rounds
-The model recognizes that higher seeds become more dominant in later rounds:
-
-- #1 seeds: Randomness progressively decreases from 16% → 12% → 8% → 5%
-- #2 seeds: Randomness decreases from 17% → 14% → 11% → 8%
-- #3-4 seeds: Randomness decreases more gradually
-- #5-8 seeds: Randomness decreases slightly
-- #9-16 seeds: Randomness actually increases slightly
-
-### Championship Boost
-- #1 seeds receive a 5% boost in the championship game (reflecting their 64.1% championship win rate)
-
-This approach produces realistic tournament outcomes where early rounds see frequent upsets (especially in 5-12, 6-11, and 7-10 matchups), but the later rounds tend to be dominated by higher seeds - just like in real NCAA tournaments.
-
-The randomness is applied by adjusting each team's ELO rating up or down by a random percentage (within the range specified for that seed and round).
-
-## Example
-
-Without a tournament teams file, the script will:
-1. Scrape or load ELO ratings
-2. Automatically create a bracket based on ELO rankings
-3. Assign seeds 1-16 to the top 64 teams across 4 regions
-
-If you want to customize the tournament teams and their seeds:
-
-1. Create a file named `[year]/tournament_teams.csv` (e.g., `2025/tournament_teams.csv`)
-2. Include columns for Team, Seed, and Region
-3. Run the prediction with: `python index.py --year 2025` 
-
-Alternatively, you can scrape real tournament data automatically:
-```
-python index.py --year 2025 --scrape-tournament
-```
-
-For incomplete tournament data (such as TBD play-in games), the script will:
-1. Create placeholder TBD teams
-2. Simulate the tournament with the available teams
-3. Maintain bracket integrity even with missing teams
 
 ## Sample Files
 
 The `samples/` directory contains reference files:
-- `sample_elo_ratings.csv` - Example of ELO ratings format
-- `tournament_teams_2024.csv` - Example tournament team format from 2024
-
-You can use these as templates for creating your own data files. 
+- `sample_elo_ratings.csv` — example ELO ratings format
+- `tournament_teams_2024.csv` — example tournament team format from 2024
