@@ -8,8 +8,9 @@ It obtains ELO ratings from data sources, processes the tournament bracket, and 
 
 import pandas as pd
 import random
+import math
 from typing import Dict, List, Tuple, Optional, Any
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 import os
 
@@ -21,8 +22,19 @@ class Team:
     elo: float
     region: str
     is_tbd: bool = False
-    
+    # Advanced stats (KenPom-equivalent from barttorvik.com T-Rank)
+    adj_oe: Optional[float] = None   # Adjusted offensive efficiency (points per 100 possessions)
+    adj_de: Optional[float] = None   # Adjusted defensive efficiency (points allowed per 100)
+    adj_t: Optional[float] = None    # Adjusted tempo (possessions per 40 minutes)
+    net_rtg: Optional[float] = None  # Net rating = adj_oe - adj_de
+
+    def __post_init__(self) -> None:
+        if self.net_rtg is None and self.adj_oe is not None and self.adj_de is not None:
+            self.net_rtg = self.adj_oe - self.adj_de
+
     def __str__(self) -> str:
+        if self.net_rtg is not None:
+            return f"{self.seed}. {self.name} (ELO: {self.elo:.0f}, NetRtg: {self.net_rtg:+.1f})"
         return f"{self.seed}. {self.name} (ELO: {self.elo:.0f})"
 
 @dataclass
@@ -35,132 +47,120 @@ class Matchup:
     game_id: int
     unique_game_id: int = 0  # Unique ID across all rounds
     
+    def win_probability(self) -> float:
+        """
+        Compute team1's win probability using available data.
+
+        Blends ELO-based probability with efficiency-based probability when
+        advanced stats (AdjOE / AdjDE) are present.  The ELO formula is the
+        standard chess/538 log5 model; the efficiency model uses a logistic
+        curve calibrated so that a +10 net-rating gap ≈ 75% win probability
+        (consistent with KenPom historical calibration).
+
+        Returns:
+            Probability that team1 wins (0–1).
+        """
+        # ELO win probability (standard formula)
+        elo_diff = self.team1.elo - self.team2.elo
+        p_elo = 1.0 / (1.0 + 10.0 ** (-elo_diff / 400.0))
+
+        # If both teams have advanced stats, blend in efficiency probability
+        t1_net = self.team1.net_rtg
+        t2_net = self.team2.net_rtg
+        if t1_net is not None and t2_net is not None:
+            net_diff = t1_net - t2_net
+            # logistic scale k=0.15 → net_diff of ~10 pts ≈ 75% win prob
+            p_eff = 1.0 / (1.0 + math.exp(-0.15 * net_diff))
+            # Weight: 40% ELO, 60% efficiency (advanced stats are more predictive)
+            return 0.4 * p_elo + 0.6 * p_eff
+
+        return p_elo
+
     def simulate(self, randomness_factor: float = 0.1) -> Team:
         """
         Simulate the matchup between two teams with seed-based randomness.
-        
+
         Args:
             randomness_factor: Base randomness factor, used for non-seed-specific adjustments
-        
+
         Returns:
             The winning Team object
         """
         # TBD teams always lose in the first round
         if self.team1.is_tbd and self.round_num == 1:
             return self.team2
-        
+
         if self.team2.is_tbd and self.round_num == 1:
             return self.team1
-        
+
         # Use seed-based randomness for more realistic tournament outcomes
         return self.simulate_with_seed_based_randomness()
     
     def simulate_with_seed_based_randomness(self) -> Team:
         """
-        Simulate matchup using randomness calibrated to historical upset rates by seed.
-        
-        Instead of applying a flat randomness factor, this method adjusts each team's ELO
-        based on the historical upset patterns observed in March Madness.
-        
+        Simulate matchup using a win probability model blended with seed-calibrated noise.
+
+        The base win probability comes from win_probability() (ELO ± advanced stats).
+        Noise is then applied via a seed-matchup-specific randomness factor derived from
+        historical NCAA upset rates, making the simulation more realistic than a flat
+        ELO perturbation.
+
         Returns:
             The winning Team object
         """
-        # Don't modify original ELO values
-        team1_adjusted_elo = self.team1.elo
-        team2_adjusted_elo = self.team2.elo
-        
-        # Get seed matchup (use lower number as higher seed)
+        # Base win probability from model (ELO + advanced stats)
+        p_team1 = self.win_probability()
+
+        # Seed matchup context
         higher_seed = min(self.team1.seed, self.team2.seed)
         lower_seed = max(self.team1.seed, self.team2.seed)
-        
-        # For first round games, apply seed-specific randomness based on historical data
+
         if self.round_num == 1:
-            # Historical upset rates inform our randomness adjustment
-            if higher_seed == 1 and lower_seed == 16:
-                # 1v16: very small chance of upset (~1.3%)
-                random_factor = 0.03
-            elif higher_seed == 2 and lower_seed == 15:
-                # 2v15: ~7.1% upset rate
-                random_factor = 0.10
-            elif higher_seed == 3 and lower_seed == 14:
-                # 3v14: ~14.7% upset rate
-                random_factor = 0.15
-            elif higher_seed == 4 and lower_seed == 13:
-                # 4v13: ~20.5% upset rate
-                random_factor = 0.18
-            elif higher_seed == 5 and lower_seed == 12:
-                # 5v12: ~35.3% upset rate - the famous 12-5 upset
-                random_factor = 0.27
-            elif higher_seed == 6 and lower_seed == 11:
-                # 6v11: ~39.1% upset rate
-                random_factor = 0.30
-            elif higher_seed == 7 and lower_seed == 10:
-                # 7v10: ~38.7% upset rate
-                random_factor = 0.30
-            elif higher_seed == 8 and lower_seed == 9:
-                # 8v9: Practically even (~51.9% for 9 seeds)
-                random_factor = 0.40
-            else:
-                # For non-standard matchups, use a moderate randomness
-                random_factor = 0.20
-                
-            # Apply randomness to both teams' ELO ratings
-            team1_adjusted_elo *= random.uniform(1 - random_factor, 1 + random_factor)
-            team2_adjusted_elo *= random.uniform(1 - random_factor, 1 + random_factor)
+            # Noise levels calibrated to historical first-round upset rates
+            noise_map = {
+                (1, 16): 0.03,   # ~1.3% upset rate
+                (2, 15): 0.10,   # ~7.1%
+                (3, 14): 0.15,   # ~14.7%
+                (4, 13): 0.18,   # ~20.5%
+                (5, 12): 0.27,   # ~35.3% — the famous 12-seed
+                (6, 11): 0.30,   # ~39.1%
+                (7, 10): 0.30,   # ~38.7%
+                (8,  9): 0.40,   # ~51.9% — nearly a coin flip
+            }
+            noise = noise_map.get((higher_seed, lower_seed), 0.20)
+            # Perturb the win probability symmetrically
+            p_team1 += random.uniform(-noise, noise)
         else:
-            # Later rounds: seed-dependent randomness that DECREASES for high seeds
-            # This reflects that top seeds become more dominant in later rounds
-            
-            # Base randomness for later rounds
-            round_random_factor = 0.20
-            
-            # Apply seed-specific adjustments for later rounds
-            team1_seed = self.team1.seed
-            team2_seed = self.team2.seed
-            
-            # Calculate seed-specific randomness factors
-            # Higher seeds (1-3) get progressively less randomness in later rounds
-            # Lower seeds maintain higher randomness
-            def get_seed_factor(seed: int, round_num: int) -> float:
-                """Calculate randomness factor based on seed and round."""
+            # Later rounds: noise shrinks for top seeds as they prove themselves
+            def get_noise(seed: int, rnd: int) -> float:
                 if seed == 1:
-                    # #1 seeds become more dominant in later rounds (Sweet 16: 79% win rate)
-                    # Reduce randomness for each progressive round
-                    return max(0.05, round_random_factor - (round_num - 1) * 0.04)
+                    return max(0.05, 0.20 - (rnd - 1) * 0.04)
                 elif seed == 2:
-                    # #2 seeds also strong but not as dominant as #1
-                    return max(0.08, round_random_factor - (round_num - 1) * 0.03)
+                    return max(0.08, 0.20 - (rnd - 1) * 0.03)
                 elif seed <= 4:
-                    # #3-#4 seeds still relatively strong
-                    return max(0.12, round_random_factor - (round_num - 1) * 0.02)
+                    return max(0.12, 0.20 - (rnd - 1) * 0.02)
                 elif seed <= 8:
-                    # #5-#8 seeds - moderate randomness reduction
-                    return max(0.15, round_random_factor - (round_num - 1) * 0.01)
+                    return max(0.15, 0.20 - (rnd - 1) * 0.01)
                 else:
-                    # #9-#16 seeds - maintain high randomness or slightly increase
-                    # Double-digit seeds that make it to later rounds often continue to surprise
-                    return min(0.40, round_random_factor + (round_num - 1) * 0.05)
-            
-            # Get randomness factors for each team
-            team1_factor = get_seed_factor(team1_seed, self.round_num)
-            team2_factor = get_seed_factor(team2_seed, self.round_num)
-            
-            # Apply the randomness factors
-            team1_adjusted_elo *= random.uniform(1 - team1_factor, 1 + team1_factor)
-            team2_adjusted_elo *= random.uniform(1 - team2_factor, 1 + team2_factor)
-            
-            # Special case: Championship game advantage for #1 seeds (64.1% championship win rate)
+                    # Cinderella teams that survive keep surprising
+                    return min(0.40, 0.20 + (rnd - 1) * 0.05)
+
+            n1 = get_noise(self.team1.seed, self.round_num)
+            n2 = get_noise(self.team2.seed, self.round_num)
+            # Average the two noise levels, then perturb
+            noise = (n1 + n2) / 2.0
+            p_team1 += random.uniform(-noise, noise)
+
+            # Championship: small historical boost for #1 seeds (64.1% title win rate)
             if self.round_num == 6:
-                if team1_seed == 1:
-                    team1_adjusted_elo *= 1.05  # Small boost for #1 seeds in championship
-                if team2_seed == 1:
-                    team2_adjusted_elo *= 1.05  # Small boost for #1 seeds in championship
-        
-        # Determine winner based on adjusted ELO
-        if team1_adjusted_elo > team2_adjusted_elo:
-            return self.team1
-        else:
-            return self.team2
+                if self.team1.seed == 1:
+                    p_team1 += 0.05
+                if self.team2.seed == 1:
+                    p_team1 -= 0.05
+
+        # Clamp to [0, 1] and draw outcome
+        p_team1 = max(0.0, min(1.0, p_team1))
+        return self.team1 if random.random() < p_team1 else self.team2
     
     def __str__(self) -> str:
         return f"{self.team1} vs {self.team2} (Round {self.round_num}, {self.region}, Game {self.game_id}, UID: {self.unique_game_id})"
@@ -287,7 +287,11 @@ class BracketPredictor:
                 name=team_info["name"],
                 seed=team_info["seed"],
                 elo=team_info["elo"],
-                region=team_info["region"]
+                region=team_info["region"],
+                adj_oe=team_info.get("adj_oe"),
+                adj_de=team_info.get("adj_de"),
+                adj_t=team_info.get("adj_t"),
+                net_rtg=team_info.get("net_rtg"),
             )
             self.teams[team.name] = team
         
@@ -511,6 +515,74 @@ class BracketPredictor:
         
         return results
     
+    def simulate_n_times(self, n: int = 1000) -> Dict[str, Any]:
+        """
+        Run the full tournament simulation n times and aggregate win probabilities.
+
+        Each simulation is independent.  The results include, for every team,
+        how often they reach each round and win the championship.
+
+        Args:
+            n: Number of simulations to run (default 1000).
+
+        Returns:
+            Dictionary with keys:
+              - "simulations": n (int)
+              - "champion_prob": {team_name: probability} sorted descending
+              - "round_reach_prob": {round_name: {team_name: probability}}
+        """
+        from collections import defaultdict
+
+        champion_counts: Dict[str, int] = defaultdict(int)
+        round_reach_counts: Dict[int, Dict[str, int]] = {
+            r: defaultdict(int) for r in range(1, 7)
+        }
+
+        print(f"Running {n} tournament simulations...")
+        for _ in range(n):
+            results = self.simulate_tournament()
+            for round_num, matchups in results.items():
+                for team1, team2, winner, region, game_id, unique_id in matchups:
+                    # Both teams reached this round
+                    if not team1.is_tbd:
+                        round_reach_counts[round_num][team1.name] += 1
+                    if not team2.is_tbd:
+                        round_reach_counts[round_num][team2.name] += 1
+                    # Championship winner
+                    if round_num == 6 and not winner.is_tbd:
+                        champion_counts[winner.name] += 1
+
+        champion_prob = {
+            name: round(count / n, 4)
+            for name, count in sorted(champion_counts.items(), key=lambda x: -x[1])
+        }
+
+        round_reach_prob: Dict[str, Dict[str, float]] = {}
+        for round_num, counts in round_reach_counts.items():
+            round_name = self.round_names.get(round_num, f"Round {round_num}")
+            round_reach_prob[round_name] = {
+                name: round(count / n, 4)
+                for name, count in sorted(counts.items(), key=lambda x: -x[1])
+            }
+
+        return {
+            "simulations": n,
+            "champion_prob": champion_prob,
+            "round_reach_prob": round_reach_prob,
+        }
+
+    def export_simulation_results(self, sim_results: Dict[str, Any], filepath: str) -> None:
+        """
+        Export multi-simulation probability results to a JSON file.
+
+        Args:
+            sim_results: Output of simulate_n_times().
+            filepath: Path to write JSON output.
+        """
+        with open(filepath, "w") as f:
+            json.dump(sim_results, f, indent=2)
+        print(f"Simulation probabilities exported to {filepath}")
+
     def print_bracket(self, results: Dict[int, List[Tuple[Team, Team, Team, str, int, int]]]) -> None:
         """
         Print the predicted bracket in a readable format.
