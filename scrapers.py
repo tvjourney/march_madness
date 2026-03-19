@@ -406,6 +406,313 @@ def add_tournament_info(df: pd.DataFrame, tournament_teams_file: Optional[str] =
     # If no tournament file or error occurred, return original DataFrame
     return df
 
+def scrape_advanced_stats(year: Optional[int] = None, debug: bool = False) -> Optional[pd.DataFrame]:
+    """
+    Scrape advanced team stats (adjusted offensive/defensive efficiency, tempo) from barttorvik.com.
+    These are KenPom-equivalent metrics available publicly via T-Rank.
+
+    Args:
+        year: The season year to scrape. Defaults to current year.
+        debug: Whether to save debug files.
+
+    Returns:
+        DataFrame with columns: Team, AdjOE, AdjDE, AdjT, NetRtg, TRank
+        or None if scraping failed.
+    """
+    if year is None:
+        current_year = datetime.datetime.now().year
+        year = current_year if datetime.datetime.now().month < 6 else current_year + 1
+
+    url = f"https://barttorvik.com/trank.php?year={year}&sort=&top=0&conlimit=All#"
+
+    try:
+        print(f"Fetching advanced stats from {url}")
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+                          '(KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3'
+        }
+        response = requests.get(url, headers=headers, timeout=30)
+        response.raise_for_status()
+
+        if debug:
+            ensure_dir_exists("debug")
+            debug_html = os.path.join("debug", f"advanced_stats_{year}.html")
+            with open(debug_html, "w", encoding="utf-8") as f:
+                f.write(response.text)
+            print(f"Saved HTML to {debug_html} for debugging")
+
+        soup = BeautifulSoup(response.text, 'html.parser')
+
+        # barttorvik uses a table with id="t-rank-table" or similar
+        table = soup.find('table', {'id': 't-rank-table'})
+        if not table:
+            table = soup.find('table')
+
+        if not table:
+            print("Error: Could not find stats table on barttorvik.com")
+            return None
+
+        rows = table.find_all('tr')
+        if not rows:
+            print("Error: No rows found in stats table")
+            return None
+
+        # Parse header to find column indices
+        header_row = rows[0]
+        headers_cells = [th.text.strip() for th in header_row.find_all(['th', 'td'])]
+        if debug:
+            print(f"Table headers: {headers_cells}")
+
+        # Column name mapping (barttorvik uses shorthand names)
+        col_map = {
+            'team': None, 'adjoe': None, 'adjde': None, 'adjt': None, 'rk': None
+        }
+        for i, h in enumerate(headers_cells):
+            h_lower = h.lower().replace(' ', '').replace('.', '')
+            if h_lower in ('team', 'teamname'):
+                col_map['team'] = i
+            elif h_lower in ('adjoe', 'adjo', 'offeff', 'adjoffeff'):
+                col_map['adjoe'] = i
+            elif h_lower in ('adjde', 'adjd', 'defeff', 'adjdefeff'):
+                col_map['adjde'] = i
+            elif h_lower in ('adjt', 'adjtempo', 'tempo'):
+                col_map['adjt'] = i
+            elif h_lower in ('rk', 'rank', 'trank'):
+                col_map['rk'] = i
+
+        data = []
+        for row in rows[1:]:
+            cells = row.find_all('td')
+            if not cells:
+                continue
+
+            def get_cell_text(idx: Optional[int]) -> str:
+                if idx is None or idx >= len(cells):
+                    return ""
+                return cells[idx].text.strip()
+
+            # Try to get team name from link first
+            team_name = None
+            team_idx = col_map['team']
+            if team_idx is not None and team_idx < len(cells):
+                link = cells[team_idx].find('a')
+                team_name = link.text.strip() if link else cells[team_idx].text.strip()
+
+            if not team_name:
+                continue
+
+            try:
+                adj_oe = float(get_cell_text(col_map['adjoe'])) if col_map['adjoe'] is not None else None
+                adj_de = float(get_cell_text(col_map['adjde'])) if col_map['adjde'] is not None else None
+                adj_t = float(get_cell_text(col_map['adjt'])) if col_map['adjt'] is not None else None
+                t_rank_str = get_cell_text(col_map['rk'])
+                t_rank = int(t_rank_str) if t_rank_str.isdigit() else None
+            except (ValueError, TypeError):
+                continue
+
+            net_rtg = round(adj_oe - adj_de, 2) if adj_oe is not None and adj_de is not None else None
+
+            data.append({
+                'Team': team_name,
+                'AdjOE': adj_oe,
+                'AdjDE': adj_de,
+                'AdjT': adj_t,
+                'NetRtg': net_rtg,
+                'TRank': t_rank
+            })
+
+        if not data:
+            print("Error: No advanced stats rows parsed")
+            return None
+
+        df = pd.DataFrame(data)
+        print(f"Successfully scraped advanced stats for {len(df)} teams")
+
+        if debug:
+            raw_csv = os.path.join("debug", f"raw_advanced_stats_{year}.csv")
+            df.to_csv(raw_csv, index=False)
+            print(f"Saved raw data to {raw_csv}")
+
+        return df
+
+    except requests.RequestException as e:
+        print(f"Error fetching advanced stats: {e}")
+        return None
+    except Exception as e:
+        print(f"Error processing advanced stats: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+
+def scrape_historical_results(
+    start_year: int = 2010,
+    end_year: Optional[int] = None,
+    debug: bool = False
+) -> Optional[pd.DataFrame]:
+    """
+    Scrape historical NCAA tournament game results from sports-reference.com.
+
+    Pulls results year-by-year and computes upset rates by seed matchup and round,
+    storing them as a flat DataFrame of individual game outcomes.
+
+    Args:
+        start_year: First year to include (default 2010).
+        end_year: Last year to include (default: current year - 1).
+        debug: Whether to save debug files.
+
+    Returns:
+        DataFrame with columns: Year, Round, HigherSeed, LowerSeed, Winner, Upset
+        or None if all scraping failed.
+    """
+    if end_year is None:
+        end_year = datetime.datetime.now().year - 1
+
+    round_name_map = {
+        'First Round': 1, 'Second Round': 2,
+        'Sweet Sixteen': 3, 'Elite Eight': 4,
+        'Final Four': 5, 'National Championship': 6,
+        # alternate spellings
+        'Sweet 16': 3, 'Elite 8': 4,
+    }
+
+    all_games: List[Dict[str, Any]] = []
+
+    for year in range(start_year, end_year + 1):
+        url = f"https://www.sports-reference.com/cbb/postseason/men/{year}-ncaa.html"
+        try:
+            print(f"Fetching {year} tournament results from sports-reference.com...")
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+                              '(KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3'
+            }
+            response = requests.get(url, headers=headers, timeout=30)
+            response.raise_for_status()
+
+            if debug:
+                ensure_dir_exists("debug")
+                debug_html = os.path.join("debug", f"tournament_results_{year}.html")
+                with open(debug_html, "w", encoding="utf-8") as f:
+                    f.write(response.text)
+
+            soup = BeautifulSoup(response.text, 'html.parser')
+
+            # Each game is represented as a div with class "game" or similar
+            # sports-reference bracket pages list scores in a bracket structure
+            # We look for score divs grouped by round
+            current_round_num = None
+
+            for tag in soup.find_all(['h2', 'h3', 'div']):
+                # Detect round headers
+                if tag.name in ('h2', 'h3'):
+                    text = tag.text.strip()
+                    for round_name, round_num in round_name_map.items():
+                        if round_name.lower() in text.lower():
+                            current_round_num = round_num
+                            break
+
+                # Parse game score blocks: look for divs containing seed + team score pairs
+                if tag.name == 'div' and 'game' in tag.get('class', []):
+                    teams_in_game = tag.find_all('div', class_=re.compile(r'team'))
+                    if len(teams_in_game) < 2:
+                        continue
+
+                    game_teams = []
+                    for team_div in teams_in_game[:2]:
+                        seed_span = team_div.find('span', class_=re.compile(r'seed'))
+                        seed_val = None
+                        if seed_span:
+                            try:
+                                seed_val = int(seed_span.text.strip())
+                            except ValueError:
+                                pass
+
+                        name_span = team_div.find('span', class_=re.compile(r'name|short'))
+                        team_name = name_span.text.strip() if name_span else ""
+
+                        score_span = team_div.find('span', class_=re.compile(r'score|pts'))
+                        score_val = None
+                        if score_span:
+                            try:
+                                score_val = int(score_span.text.strip())
+                            except ValueError:
+                                pass
+
+                        game_teams.append({'name': team_name, 'seed': seed_val, 'score': score_val})
+
+                    if len(game_teams) == 2 and all(t['seed'] is not None for t in game_teams):
+                        t1, t2 = game_teams
+                        higher = t1 if t1['seed'] < t2['seed'] else t2
+                        lower = t2 if t1['seed'] < t2['seed'] else t1
+
+                        if t1['score'] is not None and t2['score'] is not None:
+                            winner_seed = t1['seed'] if t1['score'] > t2['score'] else t2['seed']
+                            upset = winner_seed == lower['seed']
+
+                            all_games.append({
+                                'Year': year,
+                                'Round': current_round_num,
+                                'HigherSeed': higher['seed'],
+                                'LowerSeed': lower['seed'],
+                                'HigherSeedTeam': higher['name'],
+                                'LowerSeedTeam': lower['name'],
+                                'Winner': 'lower' if upset else 'higher',
+                                'Upset': upset
+                            })
+
+        except requests.RequestException as e:
+            print(f"Warning: Could not fetch {year} tournament data: {e}")
+        except Exception as e:
+            print(f"Warning: Error processing {year} tournament data: {e}")
+            if debug:
+                import traceback
+                traceback.print_exc()
+
+    if not all_games:
+        print("Warning: No historical game data could be scraped. "
+              "sports-reference.com bracket pages may use JavaScript rendering.")
+        return None
+
+    df = pd.DataFrame(all_games)
+    print(f"Scraped {len(df)} historical tournament games ({start_year}–{end_year})")
+
+    if debug:
+        ensure_dir_exists("debug")
+        df.to_csv(os.path.join("debug", "historical_results.csv"), index=False)
+
+    return df
+
+
+def compute_historical_upset_rates(historical_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Compute upset rates by seed matchup and round from historical game data.
+
+    Args:
+        historical_df: DataFrame from scrape_historical_results().
+
+    Returns:
+        DataFrame with columns: HigherSeed, LowerSeed, Round, Games, Upsets, UpsetRate
+    """
+    if historical_df is None or historical_df.empty:
+        return pd.DataFrame()
+
+    groups = historical_df.groupby(['HigherSeed', 'LowerSeed', 'Round'])
+    records = []
+    for (higher, lower, rnd), group in groups:
+        games = len(group)
+        upsets = group['Upset'].sum()
+        records.append({
+            'HigherSeed': higher,
+            'LowerSeed': lower,
+            'Round': rnd,
+            'Games': games,
+            'Upsets': int(upsets),
+            'UpsetRate': round(upsets / games, 4) if games > 0 else 0.0
+        })
+
+    return pd.DataFrame(records).sort_values(['Round', 'HigherSeed'])
+
+
 def ensure_dir_exists(directory: str) -> None:
     """
     Ensure a directory exists, creating it if necessary.
