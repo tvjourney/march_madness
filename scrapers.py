@@ -16,6 +16,195 @@ import os
 import sys
 import datetime
 import re
+import difflib
+
+# Known team name aliases: maps alternative/display names -> canonical ELO name
+# Add entries here whenever a tournament team name doesn't match the ELO source
+TEAM_NAME_ALIASES: Dict[str, str] = {
+    # UConn variants
+    "uconn": "Connecticut",
+    "connecticut (uconn)": "Connecticut",
+    # UNC variants
+    "unc": "North Carolina",
+    "north carolina (unc)": "North Carolina",
+    # St. John's variants
+    "st. john's (ny)": "Saint John's",
+    "st. john's": "Saint John's",
+    "st johns": "Saint John's",
+    # Saint Mary's variants
+    "saint mary's": "Saint Mary's (CA)",
+    "st. mary's": "Saint Mary's (CA)",
+    "st. mary's (ca)": "Saint Mary's (CA)",
+    # LIU variants
+    "liu": "Long Island",
+    "long island university": "Long Island",
+    # Queens variants
+    "queens (nc)": "Queens",
+    "queens university of charlotte": "Queens",
+    # Arkansas-Pine Bluff
+    "arkansas-pine bluff": "Ark.-Pine Bluff",
+    # Mississippi Valley State
+    "mississippi valley st.": "Mississippi Valley St.",
+    # Texas A&M variants
+    "texas a&m-corpus christi": "Texas A&M-CC",
+    # UC variants
+    "uc santa barbara": "UCSB",
+    "uc irvine": "UC Irvine",
+    "uc davis": "UC Davis",
+    "uc san diego": "UC San Diego",
+    # Nevada Las Vegas
+    "unlv": "Nevada-Las Vegas",
+    # Fresno State
+    "fresno st.": "Fresno State",
+    "fresno st": "Fresno State",
+    # Miami variants
+    "miami (oh)": "Miami (OH)",
+    "miami (ohio)": "Miami (OH)",
+    # Others
+    "vmi": "VMI",
+    "southeastern louisiana": "SE Louisiana",
+    "se louisiana": "SE Louisiana",
+    "app state": "Appalachian State",
+    "appalachian st.": "Appalachian State",
+    "morehead st.": "Morehead State",
+    "morehead st": "Morehead State",
+    "siu edwardsville": "SIU-Edwardsville",
+    "siue": "SIU-Edwardsville",
+    "montana st.": "Montana State",
+    "montana st": "Montana State",
+    "south dakota st.": "South Dakota State",
+    "south dakota st": "South Dakota State",
+    "north dakota st.": "North Dakota State",
+    "north dakota st": "North Dakota State",
+    "cal poly": "Cal Poly",
+    "cal poly slo": "Cal Poly",
+    "texas southern": "Texas Southern",
+    "grambling": "Grambling State",
+    "grambling st.": "Grambling State",
+    "jackson st.": "Jackson State",
+    "jackson st": "Jackson State",
+    "prairie view a&m": "Prairie View",
+    "prairie view": "Prairie View",
+    "fiu": "FIU",
+    "florida international": "FIU",
+    "njit": "NJIT",
+    "umbc": "UMBC",
+    "uab": "UAB",
+    "utsa": "UTSA",
+    "utep": "UTEP",
+    "vcu": "VCU",
+    "usc": "Southern California",
+    "smu": "SMU",
+    "tcu": "TCU",
+    "ole miss": "Mississippi",
+    "pitt": "Pittsburgh",
+    "ohio st.": "Ohio State",
+    "ohio st": "Ohio State",
+    "mich state": "Michigan State",
+    "mich st.": "Michigan State",
+    "penn st.": "Penn State",
+    "penn st": "Penn State",
+    "n.c. state": "NC State",
+    "nc st.": "NC State",
+    "nc st": "NC State",
+    "north carolina st.": "NC State",
+    "north carolina state": "NC State",
+    "lsu": "LSU",
+    "southern miss": "Southern Mississippi",
+    "southern miss.": "Southern Mississippi",
+    "central florida": "UCF",
+    "unc wilmington": "UNCW",
+    "unc greensboro": "UNC Greensboro",
+    "unc asheville": "UNC Asheville",
+    "byu": "BYU",
+    "brigham young": "BYU",
+    "umass": "Massachusetts",
+    "u mass": "Massachusetts",
+    "uc-davis": "UC Davis",
+    "st. bonaventure": "St. Bonaventure",
+    "st. joseph's": "Saint Joseph's",
+    "st. joseph's (pa)": "Saint Joseph's",
+    "loyola (il)": "Loyola Chicago",
+    "loyola-chicago": "Loyola Chicago",
+    "loyola chicago": "Loyola Chicago",
+    "texas a&m-cc": "Texas A&M-CC",
+    "kent st.": "Kent State",
+    "kent st": "Kent State",
+    "miami fl": "Miami (FL)",
+    "miami (fl)": "Miami (FL)",
+    "miami florida": "Miami (FL)",
+    "northern iowa": "N. Iowa",
+    "n. iowa": "N. Iowa",
+}
+
+
+def normalize_team_name(name: str) -> str:
+    """
+    Normalize a team name for matching purposes.
+    Lowercases, strips extra whitespace, and removes common qualifiers.
+    """
+    normalized = name.strip().lower()
+    # Remove trailing state/qualifier in parentheses for primary match attempt
+    normalized = re.sub(r'\s*\((?:ny|ca|oh|fl|pa|il|tx|va|nc|sc)\)\s*$', '', normalized)
+    # Normalize punctuation
+    normalized = normalized.replace('.', '').replace("'", "'").replace('–', '-')
+    normalized = re.sub(r'\s+', ' ', normalized).strip()
+    return normalized
+
+
+def find_best_team_match(name: str, candidates: List[str], threshold: float = 0.75) -> Optional[str]:
+    """
+    Find the best matching team name from a list of candidates.
+
+    Tries in order:
+    1. Exact match
+    2. Alias lookup (TEAM_NAME_ALIASES)
+    3. Case-insensitive exact match
+    4. Normalized name match
+    5. Fuzzy match using difflib (if score >= threshold)
+
+    Args:
+        name: The team name to look up
+        candidates: List of candidate names to match against
+        threshold: Minimum fuzzy match score (0-1) to accept
+
+    Returns:
+        The best matching candidate name, or None if no match found
+    """
+    # 1. Exact match
+    if name in candidates:
+        return name
+
+    # 2. Alias lookup
+    alias_key = name.strip().lower()
+    if alias_key in TEAM_NAME_ALIASES:
+        canonical = TEAM_NAME_ALIASES[alias_key]
+        if canonical in candidates:
+            return canonical
+
+    # 3. Case-insensitive exact match
+    name_lower = name.strip().lower()
+    candidates_lower = {c.lower(): c for c in candidates}
+    if name_lower in candidates_lower:
+        return candidates_lower[name_lower]
+
+    # 4. Normalized match (strip qualifiers)
+    name_norm = normalize_team_name(name)
+    for cand in candidates:
+        if normalize_team_name(cand) == name_norm:
+            return cand
+
+    # 5. Fuzzy match
+    matches = difflib.get_close_matches(name, candidates, n=1, cutoff=threshold)
+    if matches:
+        return matches[0]
+
+    # Try fuzzy on lowercase
+    matches_lower = difflib.get_close_matches(name_lower, list(candidates_lower.keys()), n=1, cutoff=threshold)
+    if matches_lower:
+        return candidates_lower[matches_lower[0]]
+
+    return None
 
 def scrape_elo_ratings(year: Optional[int] = None, url: Optional[str] = None, debug: bool = False) -> Optional[pd.DataFrame]:
     """
@@ -372,22 +561,48 @@ def add_tournament_info(df: pd.DataFrame, tournament_teams_file: Optional[str] =
                 print("Error: 'Team' column missing from tournament data")
                 return df
                 
+            # Before merging, resolve name mismatches using alias + fuzzy matching.
+            # Build a mapping from tournament team names to ELO team names.
+            elo_names = list(df['Team'])
+            name_mapping: Dict[str, str] = {}
+            unresolved: List[str] = []
+
+            for t_name in tournament_df['Team']:
+                match = find_best_team_match(t_name, elo_names)
+                if match:
+                    if match != t_name:
+                        if debug:
+                            print(f"Name match: '{t_name}' -> '{match}'")
+                    name_mapping[t_name] = match
+                else:
+                    unresolved.append(t_name)
+
+            if unresolved:
+                print(f"Note: {len(unresolved)} tournament team(s) could not be matched to ELO data: "
+                      f"{unresolved}")
+
+            # Apply the name mapping to tournament_df for the merge
+            tournament_df_mapped = tournament_df.copy()
+            tournament_df_mapped['Team'] = tournament_df_mapped['Team'].map(
+                lambda n: name_mapping.get(n, n)
+            )
+
             # Using left join to keep all teams from the ELO ratings
             try:
-                merged_df = pd.merge(df, tournament_df, on='Team', how='left')
-                
+                merged_df = pd.merge(df, tournament_df_mapped, on='Team', how='left')
+
                 # Handle duplicate columns (e.g., if there's Seed_x and Seed_y)
                 if 'Seed_x' in merged_df.columns and 'Seed_y' in merged_df.columns:
                     merged_df['Seed'] = merged_df['Seed_y'].fillna(merged_df['Seed_x'])
                     merged_df = merged_df.drop(['Seed_x', 'Seed_y'], axis=1)
-                
+
                 if 'Region_x' in merged_df.columns and 'Region_y' in merged_df.columns:
                     merged_df['Region'] = merged_df['Region_y'].fillna(merged_df['Region_x'])
                     merged_df = merged_df.drop(['Region_x', 'Region_y'], axis=1)
-                
+
                 # Count teams that have tournament information
                 teams_in_tourney = len(merged_df.dropna(subset=['Seed', 'Region']))
-                
+
                 print(f"Found {teams_in_tourney} teams in the tournament")
                 return merged_df
             except Exception as e:
@@ -405,6 +620,219 @@ def add_tournament_info(df: pd.DataFrame, tournament_teams_file: Optional[str] =
     
     # If no tournament file or error occurred, return original DataFrame
     return df
+
+def scrape_tournament_teams_espn(year: Optional[int] = None, debug: bool = False) -> Optional[pd.DataFrame]:
+    """
+    Scrape NCAA tournament team information from ESPN as a fallback source.
+
+    Args:
+        year: The year to scrape tournament data for. Defaults to current year.
+        debug: Whether to save debug files
+
+    Returns:
+        DataFrame containing tournament team information or None if scraping failed
+    """
+    if year is None:
+        current_year = datetime.datetime.now().year
+        year = current_year if datetime.datetime.now().month < 6 else current_year + 1
+
+    url = f"https://www.espn.com/mens-college-basketball/tournament/bracket/_/id/{year}"
+
+    try:
+        print(f"Fetching tournament bracket from ESPN: {url}")
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+                          '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        }
+        response = requests.get(url, headers=headers, timeout=30)
+        response.raise_for_status()
+
+        if debug:
+            ensure_dir_exists("debug")
+            debug_html = os.path.join("debug", f"espn_bracket_{year}.html")
+            with open(debug_html, "w", encoding="utf-8") as f:
+                f.write(response.text)
+
+        soup = BeautifulSoup(response.text, 'html.parser')
+
+        tournament_teams = []
+
+        # ESPN embeds bracket data in JSON within a <script> tag
+        # Look for __espnfitt__ or similar embedded JSON
+        for script_tag in soup.find_all('script'):
+            script_text = script_tag.string or ''
+            if 'competitors' not in script_text and 'seeds' not in script_text.lower():
+                continue
+
+            # Try to find bracket JSON data
+            json_match = re.search(r'window\[[\'"](.*?)[\'"]\]\s*=\s*(\{.*?\});', script_text, re.DOTALL)
+            if not json_match:
+                json_match = re.search(r'__espnfitt__\s*=\s*(\{.*\})\s*;', script_text, re.DOTALL)
+            if json_match:
+                try:
+                    import json
+                    data_str = json_match.group(2) if json_match.lastindex >= 2 else json_match.group(1)
+                    bracket_data = json.loads(data_str)
+                    # Walk the JSON looking for team/seed/region entries
+                    _extract_espn_teams(bracket_data, tournament_teams)
+                    if tournament_teams:
+                        break
+                except Exception:
+                    pass
+
+        # Fallback: parse visible HTML for seed + team name patterns
+        if not tournament_teams:
+            # ESPN uses elements like <span class="seed">1</span><span class="name">Duke</span>
+            for seed_el in soup.find_all(class_=re.compile(r'\bseed\b')):
+                try:
+                    seed_val = int(seed_el.get_text(strip=True))
+                except ValueError:
+                    continue
+
+                # Try sibling/parent for team name
+                parent = seed_el.parent
+                name_el = parent.find(class_=re.compile(r'\bname\b|\bteam-name\b'))
+                if not name_el:
+                    # Try next sibling text
+                    siblings = list(seed_el.next_siblings)
+                    for sib in siblings[:3]:
+                        text = getattr(sib, 'get_text', lambda **kw: str(sib))(strip=True)
+                        if text and not text.isdigit():
+                            name_el = sib
+                            break
+
+                if name_el:
+                    team_name = getattr(name_el, 'get_text', lambda **kw: str(name_el))(strip=True)
+                    if team_name and 1 <= seed_val <= 16:
+                        tournament_teams.append({'Team': team_name, 'Seed': seed_val, 'Region': None})
+
+        if not tournament_teams:
+            if debug:
+                print("ESPN scraper: no teams found in HTML or JSON")
+            return None
+
+        df = pd.DataFrame(tournament_teams).drop_duplicates(subset=['Team', 'Seed'])
+        print(f"ESPN fallback: found {len(df)} teams")
+        return df
+
+    except requests.RequestException as e:
+        print(f"ESPN fallback scraper failed: {e}")
+        return None
+    except Exception as e:
+        if debug:
+            print(f"ESPN fallback scraper error: {e}")
+            import traceback
+            traceback.print_exc()
+        return None
+
+
+def _extract_espn_teams(data: Any, results: List[Dict[str, Any]]) -> None:
+    """Recursively walk ESPN JSON to extract team name / seed / region info."""
+    if isinstance(data, dict):
+        # Look for patterns like {"seed": 1, "team": {"shortDisplayName": "Duke"}, "groupId": ...}
+        seed = data.get('seed') or data.get('seedNumber')
+        team_block = data.get('team') or data.get('competitor')
+        region = data.get('groupName') or data.get('region')
+
+        if seed and team_block and isinstance(team_block, dict):
+            team_name = (team_block.get('displayName')
+                         or team_block.get('shortDisplayName')
+                         or team_block.get('name', ''))
+            if team_name:
+                try:
+                    seed_int = int(seed)
+                    if 1 <= seed_int <= 16:
+                        results.append({
+                            'Team': team_name,
+                            'Seed': seed_int,
+                            'Region': str(region).capitalize() if region else None,
+                        })
+                except (ValueError, TypeError):
+                    pass
+
+        for v in data.values():
+            _extract_espn_teams(v, results)
+    elif isinstance(data, list):
+        for item in data:
+            _extract_espn_teams(item, results)
+
+
+def fill_missing_seeds(
+    tournament_df: pd.DataFrame,
+    year: Optional[int] = None,
+    debug: bool = False,
+) -> pd.DataFrame:
+    """
+    Attempt to fill in any missing seeds/regions in tournament_df using ESPN as a fallback.
+
+    A complete tournament has seeds 1-16 in each of 4 regions (64 teams).
+    If seeds are missing, scrapes ESPN and merges in the missing entries.
+
+    Args:
+        tournament_df: Existing tournament teams DataFrame (Team, Seed, Region)
+        year: Tournament year
+        debug: Whether to print debug info
+
+    Returns:
+        Updated DataFrame with missing seeds filled where possible
+    """
+    regions = ['East', 'West', 'South', 'Midwest']
+    missing: List[Tuple[str, int]] = []  # (region, seed)
+
+    for region in regions:
+        region_df = tournament_df[tournament_df['Region'] == region]
+        present_seeds = set(region_df['Seed'].dropna().astype(int))
+        for s in range(1, 17):
+            if s not in present_seeds:
+                missing.append((region, s))
+
+    if not missing:
+        return tournament_df
+
+    print(f"Attempting to fill {len(missing)} missing seed(s) from ESPN...")
+
+    espn_df = scrape_tournament_teams_espn(year, debug=debug)
+    if espn_df is None or espn_df.empty:
+        print("Warning: ESPN fallback returned no data. Missing seeds remain as TBD.")
+        return tournament_df
+
+    rows_added = []
+    for region, seed in missing:
+        # Try to find this seed in the ESPN data
+        # If ESPN has region info, use it; otherwise match by seed
+        candidates = espn_df[espn_df['Seed'] == seed]
+        if candidates.empty:
+            print(f"Warning: Could not find seed {seed} in ESPN data for {region} region.")
+            continue
+
+        if 'Region' in candidates.columns and candidates['Region'].notna().any():
+            region_match = candidates[candidates['Region'].str.lower() == region.lower()]
+            if not region_match.empty:
+                row = region_match.iloc[0]
+            else:
+                # No region match - if only one entry for this seed, use it cautiously
+                if len(candidates) == 1:
+                    row = candidates.iloc[0]
+                else:
+                    print(f"Warning: Ambiguous ESPN data for seed {seed} (no {region} region match).")
+                    continue
+        else:
+            if len(candidates) == 1:
+                row = candidates.iloc[0]
+            else:
+                print(f"Warning: Ambiguous ESPN data for seed {seed} - multiple teams, no region info.")
+                continue
+
+        team_name = row['Team']
+        print(f"Filling missing seed {seed} in {region} with '{team_name}' (from ESPN)")
+        rows_added.append({'Team': team_name, 'Seed': seed, 'Region': region})
+
+    if rows_added:
+        added_df = pd.DataFrame(rows_added)
+        tournament_df = pd.concat([tournament_df, added_df], ignore_index=True)
+
+    return tournament_df
+
 
 def scrape_advanced_stats(year: Optional[int] = None, debug: bool = False) -> Optional[pd.DataFrame]:
     """
