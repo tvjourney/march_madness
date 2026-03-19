@@ -501,67 +501,86 @@ def scrape_tournament_teams(year: Optional[int] = None, url: Optional[str] = Non
                                 if debug:
                                     print(f"Found team with text extraction: {team_name} (Seed: {seed}, Region: {region_name})")
         
-        # Fallback: if any seeds are missing, do a broader page-wide search for First Four teams.
+        # Fallback: if any seeds are missing, search for First Four teams elsewhere on the page.
         # Sports-reference lists First Four participants in a separate section; those slots in
         # the main bracket show as TBD (no link), so the region-div pass misses them.
-        found_keys = {(t['Team'], t['Seed'], t['Region']) for t in tournament_teams}
         seeds_per_region: Dict[str, set] = {}
         for t in tournament_teams:
             seeds_per_region.setdefault(t['Region'], set()).add(t['Seed'])
 
-        regions_complete = all(
-            len(seeds_per_region.get(r, set())) == 16
-            for r in ['East', 'West', 'South', 'Midwest']
-        )
+        # Build the set of (seed, region) slots that are still genuinely missing.
+        # Only fill these slots — never overwrite or duplicate correctly-found teams.
+        missing_slots: set = set()
+        for r in ['East', 'West', 'South', 'Midwest']:
+            for s in range(1, 17):
+                if s not in seeds_per_region.get(r, set()):
+                    missing_slots.add((s, r))
 
-        if not regions_complete:
+        if missing_slots:
             if debug:
-                print("Bracket incomplete after region-div pass — running page-wide link search for First Four teams")
+                print(f"Bracket incomplete — searching page for First Four teams to fill {len(missing_slots)} slot(s): {missing_slots}")
 
-            # Collect ALL team links on the page
+            found_keys = {(t['Team'], t['Seed'], t['Region']) for t in tournament_teams}
+
+            # Region keywords ordered longest-first so 'midwest' is checked before 'west',
+            # preventing 'west' from matching inside 'midwest'.
+            region_patterns = [
+                (re.compile(r'(?<![a-z])midwest(?![a-z])'), 'Midwest'),
+                (re.compile(r'(?<![a-z])east(?![a-z])'),    'East'),
+                (re.compile(r'(?<![a-z])west(?![a-z])'),    'West'),
+                (re.compile(r'(?<![a-z])south(?![a-z])'),   'South'),
+            ]
+
             all_links = soup.find_all('a', href=lambda h: h and '/cbb/schools/' in h)
             for link in all_links:
                 team_name = link.text.strip()
                 if not team_name:
                     continue
 
-                # Walk up the DOM (up to 5 levels) to find a seed span
+                # Seed: look only at DIRECT children of the link's immediate parent
+                # (avoids picking up score numbers from deeper descendants).
                 seed = None
-                node = link.parent
-                for _ in range(5):
-                    if node is None:
+                parent = link.parent
+                for _ in range(3):
+                    if parent is None:
                         break
-                    for span in node.find_all('span', recursive=False):
+                    for span in parent.find_all('span', recursive=False):
                         txt = span.text.strip()
                         if txt.isdigit() and 1 <= int(txt) <= 16:
                             seed = int(txt)
                             break
                     if seed is not None:
                         break
-                    node = node.parent
+                    parent = parent.parent
                 if seed is None:
                     continue
 
-                # Walk up the DOM to determine region from ancestor div IDs
+                # Region: walk up ancestors; use word-boundary regex (midwest before west).
                 region = None
                 node = link.parent
                 for _ in range(15):
                     if node is None:
                         break
                     node_id = (node.get('id') or '').lower()
-                    for r in ['east', 'west', 'south', 'midwest']:
-                        if r in node_id:
-                            region = r.capitalize()
+                    for pattern, region_name in region_patterns:
+                        if pattern.search(node_id):
+                            region = region_name
                             break
                     if region:
                         break
                     node = node.parent
 
-                if region and (team_name, seed, region) not in found_keys:
-                    tournament_teams.append({'Team': team_name, 'Seed': seed, 'Region': region})
-                    found_keys.add((team_name, seed, region))
-                    if debug:
-                        print(f"Page-wide search found: {team_name} (Seed: {seed}, Region: {region})")
+                # Only add the team if it fills a slot that is genuinely missing.
+                if region and (seed, region) in missing_slots:
+                    key = (team_name, seed, region)
+                    if key not in found_keys:
+                        tournament_teams.append({'Team': team_name, 'Seed': seed, 'Region': region})
+                        found_keys.add(key)
+                        missing_slots.discard((seed, region))
+                        if debug:
+                            print(f"Page-wide search found: {team_name} (Seed: {seed}, Region: {region})")
+                        if not missing_slots:
+                            break  # all missing slots filled
 
         # Create DataFrame
         if tournament_teams:
